@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="拾光日记">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5470f0" />
+      <stop offset="1" stop-color="#3b5bdb" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)" />
+  <path d="M148 116h156l60 60v220H148z" fill="#ffffff" />
+  <path d="M304 116v60h60" fill="#dbe2ff" />
+  <rect x="184" y="222" width="144" height="17" rx="8.5" fill="#9aabf0" />
+  <rect x="184" y="266" width="144" height="17" rx="8.5" fill="#c3cdf7" />
+  <rect x="184" y="310" width="92" height="17" rx="8.5" fill="#c3cdf7" />
+</svg>

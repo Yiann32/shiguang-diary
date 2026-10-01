@@ -1,0 +1,27 @@
+{
+  "name": "shiguang-diary",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "拾光日记：日记 + 记账 + 待办的本地应用，免依赖、离线可用、可安装到手机（PWA / Capacitor）",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
+    "test": "node tools/test.mjs",
+    "smoke": "node tools/smoke.mjs",
+    "screenshots": "node tools/screenshot.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "build:native": "node tools/build-www.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.2"
+  }
+}

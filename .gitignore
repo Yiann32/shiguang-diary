@@ -1,0 +1,10 @@
+node_modules/
+www/
+android/
+ios/
+.DS_Store
+*.log
+Thumbs.db
+
+# 个人数据：参考图里含真实日记截图与导出的日记正文，永远不要提交
+参考/

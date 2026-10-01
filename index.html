@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="auto">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>拾光日记</title>
+    <meta name="description" content="拾光日记：日记、记账、待办三合一的本地应用，离线可用、可安装到手机主屏。" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f2f3f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1b1c1f" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="拾光" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <link rel="stylesheet" href="css/style.css" />
+    <script>
+      // 首屏前同步应用主题，避免闪白
+      try {
+        var saved = JSON.parse(localStorage.getItem('diary:settings') || '{}') || {};
+        if (saved.theme) document.documentElement.dataset.theme = saved.theme;
+        var px = { sm: 15, md: 16, lg: 18 }[saved.fontSize] || 16;
+        document.documentElement.style.setProperty('--font-size', px + 'px');
+        if (saved.tab) document.body ? (document.body.dataset.tab = saved.tab) : null;
+      } catch (error) {
+        /* 读取失败就用默认主题 */
+      }
+    </script>
+  </head>
+  <body data-tab="timeline" data-view="list">
+    <!-- 启动画面：深灰底 + 居中图标，避免加载时闪白 -->
+    <div class="boot" id="bootSplash" aria-hidden="true">
+      <img class="boot__icon" src="icons/icon-192.png" alt="" />
+    </div>
+
+    <div class="app">
+      <div class="sidebar">
+        <!-- 时间线 -->
+        <section class="screen" data-screen="timeline">
+          <header class="topbar">
+            <button class="topbar__title" id="btnFilter" type="button" aria-label="切换筛选">
+              <span id="filterLabel">全部</span>
+            </button>
+            <span class="spacer"></span>
+            <button class="iconbtn" id="btnRandom" type="button" aria-label="随机翻开一篇" title="随机翻开一篇"></button>
+            <button class="iconbtn" id="btnSearch" type="button" aria-label="搜索" title="搜索"></button>
+          </header>
+
+          <div class="searchbar" id="searchBar" hidden>
+            <input
+              id="search"
+              class="searchbar__input"
+              type="search"
+              placeholder="搜索标题、正文、标签…"
+              aria-label="搜索日记"
+              autocomplete="off"
+            />
+            <button class="iconbtn iconbtn--sm" id="btnClearSearch" type="button" aria-label="清除搜索"></button>
+          </div>
+
+          <div class="filterbar" id="filterBar" hidden>
+            <div class="filterbar__group" id="filterOptions"></div>
+            <div class="filterbar__group filterbar__group--tags" id="filterTags"></div>
+          </div>
+
+          <!-- 待办：时间线页顶部小结，点标题进二级页 -->
+          <section class="card-panel" id="todoCard">
+            <div class="card-panel__head">
+              <button type="button" class="card-panel__open" id="btnTodoMore" aria-label="查看全部待办">
+                <span class="card-panel__title">待办</span>
+                <span class="card-panel__count" id="todoCount"></span>
+                <span class="card-panel__chevron" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="btn btn--ghost btn--sm" id="btnClearDoneTodos" hidden>清除已完成</button>
+            </div>
+            <div class="todo__add">
+              <input type="text" id="todoInput" class="input" placeholder="要做的事，回车添加" maxlength="120" />
+              <button type="button" class="btn btn--primary btn--sm" id="btnTodoAdd">添加</button>
+            </div>
+            <ul class="todo__list" id="todoList"></ul>
+            <p class="hint" id="todoEmpty">还没有待办</p>
+          </section>
+
+          <div class="timeline" id="timeline"></div>
+        </section>
+
+        <!-- 日历：右上角三态切换（日记 / 记账 / 待办） -->
+        <section class="screen" data-screen="calendar" hidden>
+          <header class="topbar topbar--cal">
+            <div class="caldate">
+              <span class="caldate__main" id="calDateMain"></span>
+              <span class="caldate__year" id="calDateYear"></span>
+            </div>
+            <span class="spacer"></span>
+            <div class="segmented segmented--mini" id="calModeGroup" role="group" aria-label="日历查看模式">
+              <button type="button" class="segmented__item is-active" data-cal-mode="diary">日记</button>
+              <button type="button" class="segmented__item" data-cal-mode="money">记账</button>
+              <button type="button" class="segmented__item" data-cal-mode="todo">待办</button>
+            </div>
+            <button class="iconbtn" id="btnCalPick" type="button" aria-label="选择年月" title="选择年月"></button>
+            <button class="iconbtn" id="btnCalToday" type="button" aria-label="回到今天" title="回到今天"></button>
+          </header>
+
+          <div class="calendar">
+            <div class="calnav">
+              <button class="iconbtn iconbtn--sm" id="btnPrevMonth" type="button" aria-label="上个月"></button>
+              <span class="calnav__label" id="calMonthLabel"></span>
+              <button class="iconbtn iconbtn--sm" id="btnNextMonth" type="button" aria-label="下个月"></button>
+            </div>
+            <div class="calendar__head" id="calHead"></div>
+            <div class="calendar__grid" id="calGrid"></div>
+          </div>
+
+          <div class="daylist" id="dayList"></div>
+        </section>
+
+        <!-- 记账 -->
+        <section class="screen" data-screen="money" hidden>
+          <header class="topbar">
+            <button class="topbar__title" id="btnBookSwitch" type="button" aria-label="切换账本">
+              <span id="bookLabel">日常账本</span>
+            </button>
+            <span class="spacer"></span>
+            <button class="iconbtn" id="btnMoneyStats" type="button" aria-label="记账统计" title="记账统计"></button>
+            <button class="iconbtn" id="btnMoneySetup" type="button" aria-label="账本设置" title="账本设置"></button>
+          </header>
+          <div class="screen__body">
+            <section class="panel money-overview" id="moneyOverview"></section>
+            <section class="panel" id="moneyChart"></section>
+            <section class="panel" id="moneyRank"></section>
+            <div class="moneyflow" id="moneyFlow"></div>
+          </div>
+          <button class="fab fab--money" id="btnMoneyAdd" type="button" aria-label="记一笔" title="记一笔"></button>
+        </section>
+
+        <!-- 我的 -->
+        <section class="screen" data-screen="profile" hidden>
+          <header class="topbar">
+            <h2 class="topbar__heading">我的</h2>
+          </header>
+          <div class="screen__body">
+            <section class="panel">
+              <button type="button" class="actionrow" id="btnOpenStats">
+                <span class="actionrow__icon" id="statsRowIcon" aria-hidden="true"></span>
+                <span>日记统计</span>
+                <span class="spacer"></span>
+                <span class="actionrow__chevron" aria-hidden="true"></span>
+              </button>
+            </section>
+
+            <section class="panel">
+              <h3 class="section__title">外观</h3>
+              <div class="segmented" id="themeGroup" role="group" aria-label="主题">
+                <button type="button" class="segmented__item" data-theme-value="auto">跟随系统</button>
+                <button type="button" class="segmented__item" data-theme-value="light">浅色</button>
+                <button type="button" class="segmented__item" data-theme-value="dark">深色</button>
+              </div>
+              <div class="segmented" id="fontGroup" role="group" aria-label="正文字号">
+                <button type="button" class="segmented__item" data-font-value="sm">小字</button>
+                <button type="button" class="segmented__item" data-font-value="md">标准</button>
+                <button type="button" class="segmented__item" data-font-value="lg">大字</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h3 class="section__title">备份与迁移</h3>
+              <p class="hint">支持导入加密的 .mbk 备份（默认口令 <code>timenotes</code>）、本应用的 ZIP / JSON 备份，以及常见 JSON、文本文件。</p>
+              <div class="btnrow">
+                <button class="btn btn--soft" type="button" id="btnExportBundle">导出完整备份（含图片）</button>
+                <button class="btn" type="button" id="btnExportJson">导出 JSON</button>
+                <button class="btn" type="button" id="btnExportMarkdown">导出 Markdown</button>
+                <button class="btn" type="button" id="btnExportCsv">导出记账 CSV</button>
+                <button class="btn" type="button" id="btnImport">导入备份…</button>
+                <button class="btn btn--danger" type="button" id="btnClearAll">清空全部</button>
+              </div>
+              <!-- 故意不写 accept：Android 的文件选择器会按 MIME 过滤，.mbk 这种自定义后缀会被藏起来 -->
+              <input type="file" id="fileInput" hidden />
+            </section>
+
+            <section class="panel" id="installRow" hidden>
+              <h3 class="section__title">安装到手机</h3>
+              <p class="hint">装到主屏后可以像 App 一样使用，断网也能写。</p>
+              <button class="btn btn--primary" type="button" id="btnInstall">安装到本机</button>
+            </section>
+
+            <section class="panel">
+              <h3 class="section__title">关于</h3>
+              <div class="rows" id="aboutBox"></div>
+              <p class="hint">所有内容只存在这台设备上，不会上传到任何服务器。建议定期导出备份。</p>
+            </section>
+          </div>
+        </section>
+
+        <button class="fab" id="btnNew" type="button" aria-label="写一篇新日记"></button>
+        <nav class="tabbar" id="tabbar" role="tablist" aria-label="主导航">
+          <button class="tab" type="button" data-tab="timeline" role="tab" aria-selected="true" aria-label="时间线" title="时间线"></button>
+          <button class="tab" type="button" data-tab="calendar" role="tab" aria-selected="false" aria-label="日历" title="日历"></button>
+          <span class="tabbar__gap" aria-hidden="true"></span>
+          <button class="tab" type="button" data-tab="money" role="tab" aria-selected="false" aria-label="记账" title="记账"></button>
+          <button class="tab" type="button" data-tab="profile" role="tab" aria-selected="false" aria-label="我的" title="我的"></button>
+        </nav>
+      </div>
+
+      <!-- 二级页：日记统计 -->
+      <section class="subpage" id="statsPage" hidden aria-labelledby="statsPageTitle">
+        <header class="topbar">
+          <button class="iconbtn" id="btnStatsBack" type="button" aria-label="返回" title="返回"></button>
+          <h2 class="topbar__heading" id="statsPageTitle">日记统计</h2>
+        </header>
+        <div class="screen__body">
+          <div class="stats" id="statsGrid"></div>
+          <div class="panel" id="heatmap"></div>
+          <div class="panel" id="monthBars"></div>
+        </div>
+      </section>
+
+      <!-- 二级页：记账统计 -->
+      <section class="subpage" id="ledgerStatsPage" hidden aria-labelledby="ledgerStatsTitle">
+        <header class="topbar">
+          <button class="iconbtn" id="btnLedgerStatsBack" type="button" aria-label="返回" title="返回"></button>
+          <h2 class="topbar__heading" id="ledgerStatsTitle">记账统计</h2>
+          <span class="spacer"></span>
+          <div class="segmented segmented--mini" id="ledgerStatsRange" role="group" aria-label="统计范围">
+            <button type="button" class="segmented__item is-active" data-range="month">本月</button>
+            <button type="button" class="segmented__item" data-range="year">本年</button>
+          </div>
+        </header>
+        <div class="screen__body" id="ledgerStatsBody"></div>
+      </section>
+
+      <!-- 二级页：账本设置（账户 / 分类 / 预算 / 周期记账） -->
+      <section class="subpage" id="ledgerSetupPage" hidden aria-labelledby="ledgerSetupTitle">
+        <header class="topbar">
+          <button class="iconbtn" id="btnSetupBack" type="button" aria-label="返回" title="返回"></button>
+          <h2 class="topbar__heading" id="ledgerSetupTitle">账本设置</h2>
+          <span class="spacer"></span>
+          <button class="btn btn--ghost btn--sm" id="btnBookManage" type="button">账本</button>
+        </header>
+        <div class="screen__body" id="ledgerSetupBody"></div>
+      </section>
+
+      <!-- 二级页：待办 -->
+      <section class="subpage" id="todoPage" hidden aria-labelledby="todoPageTitle">
+        <header class="topbar">
+          <button class="iconbtn" id="btnTodoBack" type="button" aria-label="返回" title="返回"></button>
+          <h2 class="topbar__heading" id="todoPageTitle">待办事项</h2>
+          <span class="spacer"></span>
+          <button class="btn btn--ghost btn--sm" id="btnTodoGroups" type="button">分组</button>
+          <button class="btn btn--ghost btn--sm" id="btnTodoPageClear" type="button" hidden>清除已完成</button>
+        </header>
+        <div class="screen__body">
+          <div class="todo__add">
+            <input type="text" id="todoPageInput" class="input" placeholder="要做的事，回车添加" maxlength="120" />
+            <button type="button" class="btn btn--primary btn--sm" id="btnTodoPageAdd">添加</button>
+          </div>
+          <div id="todoPageBody"></div>
+          <p class="hint" id="todoPageEmpty">还没有待办</p>
+        </div>
+      </section>
+
+      <!-- 编辑器 -->
+      <main class="editor" id="editor" hidden>
+        <form class="editor__wrap" id="editorForm" autocomplete="off">
+          <header class="editorbar">
+            <button type="button" class="iconbtn" id="btnBack" aria-label="退出编辑" title="退出编辑"></button>
+
+            <!-- 移动端：大号日期块，点一下改日期（对应参考图的 27 / 周日 / 2026.9） -->
+            <button type="button" class="dateblock mobile-only" id="btnPickDate" aria-label="修改日期">
+              <span class="dateblock__day" id="dateDay">1</span>
+              <span class="dateblock__meta">
+                <span class="dateblock__weekday" id="dateWeekday"></span>
+                <span class="dateblock__ym" id="dateYearMonth"></span>
+              </span>
+            </button>
+
+            <div class="editorbar__date">
+              <button type="button" class="iconbtn iconbtn--sm" id="btnPrevDay" aria-label="上一篇日记" title="上一篇日记"></button>
+              <input type="date" id="fDate" class="datefield" aria-label="日记日期" />
+              <button type="button" class="iconbtn iconbtn--sm" id="btnNextDay" aria-label="下一篇日记" title="下一篇日记"></button>
+            </div>
+            <span class="spacer"></span>
+            <button type="button" class="iconbtn desktop-only" id="btnPin" aria-label="收藏" title="收藏" aria-pressed="false"></button>
+            <button type="button" class="iconbtn desktop-only" id="btnPreview" aria-label="预览" title="预览 Markdown" aria-pressed="false"></button>
+            <button type="button" class="iconbtn iconbtn--danger desktop-only" id="btnDelete" aria-label="删除" title="删除"></button>
+            <button type="button" class="btn btn--primary btn--sm mobile-only" id="btnSaveMobile">保存</button>
+          </header>
+
+          <div class="editor__main">
+            <div class="todostrip" id="editorTodos" hidden></div>
+            <input
+              type="text"
+              id="fTitle"
+              class="field field--title desktop-only"
+              placeholder="标题（可留空）"
+              maxlength="200"
+            />
+            <div class="edmedia" id="editorMedia" hidden></div>
+            <textarea
+              id="fContent"
+              class="field field--content"
+              placeholder="今天发生了什么？支持 Markdown：**加粗**、# 标题、- 列表、> 引用"
+              spellcheck="false"
+            ></textarea>
+            <article id="preview" class="preview markdown-body" hidden></article>
+          </div>
+
+          <footer class="editor__foot">
+            <button type="button" class="inforow inforow--tag" id="btnEditTags">
+              <span class="inforow__icon" id="tagRowIcon" aria-hidden="true"></span>
+              <span class="inforow__label">标签</span>
+              <span class="inforow__value" id="tagSummary">无</span>
+            </button>
+            <input type="text" id="fTags" hidden />
+            <div class="inforow inforow--static mobile-only">
+              <span class="inforow__icon" id="wordRowIcon" aria-hidden="true"></span>
+              <span class="inforow__value" id="wordCount">0 字</span>
+            </div>
+            <span class="save-status" id="saveStatus" aria-live="polite"></span>
+            <span class="editor__meta desktop-only" id="editorMeta"></span>
+          </footer>
+        </form>
+      </main>
+
+      <div class="placeholder" aria-hidden="true"><p>选一篇日记开始写，或点右下角「＋」新建</p></div>
+    </div>
+
+    <!-- 记一笔：全屏金额键盘（主流记账 App 的录入方式） -->
+    <section class="keypad" id="keypad" hidden aria-label="记一笔">
+      <header class="keypad__head">
+        <button type="button" class="iconbtn" id="btnKeypadClose" aria-label="关闭" title="关闭"></button>
+        <div class="segmented segmented--mini" id="keypadTypeGroup" role="group" aria-label="记账类型">
+          <button type="button" class="segmented__item is-active" data-ledger-type="expense">支出</button>
+          <button type="button" class="segmented__item" data-ledger-type="income">收入</button>
+          <button type="button" class="segmented__item" data-ledger-type="transfer">转账</button>
+        </div>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn--danger btn--sm" id="btnKeypadDelete" hidden>删除</button>
+      </header>
+      <div class="keypad__value" id="keypadValue">0.00</div>
+      <div class="keypad__chips" id="keypadChips"></div>
+      <div class="keypad__picker" id="keypadPicker"></div>
+      <div class="keypad__pad" id="keypadPad"></div>
+    </section>
+
+    <dialog class="sheet" id="importDialog" aria-labelledby="importTitle">
+      <form method="dialog">
+        <header class="sheet__head">
+          <h2 class="sheet__title" id="importTitle">导入备份</h2>
+        </header>
+        <div class="sheet__body">
+          <p class="hint" id="importSummary"></p>
+          <div class="fieldrow" id="importPasswordRow" hidden>
+            <label class="fieldrow__label" for="importPassword">备份密码</label>
+            <input
+              type="password"
+              id="importPassword"
+              class="input"
+              placeholder="留空就用默认口令"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+            <p class="hint" id="importHint" hidden>加密备份的默认口令是 <code>timenotes</code>，留空会自动尝试。</p>
+          </div>
+          <label class="checkrow">
+            <input type="checkbox" id="importMedia" checked />
+            <span>一起导入图片（体积大、耗时久，可先关掉只导文字）</span>
+          </label>
+          <p class="hint hint--status" id="importProgress"></p>
+        </div>
+        <footer class="sheet__foot">
+          <button type="submit" value="cancel" class="btn">取消</button>
+          <button type="button" id="btnImportRead" class="btn">读取内容</button>
+          <button type="button" id="btnImportMerge" class="btn btn--soft" disabled>合并</button>
+          <button type="button" id="btnImportReplace" class="btn btn--danger" disabled>覆盖</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- 通用表单弹窗：分类 / 账户 / 预算 / 周期记账 / 待办 / 分组都用它 -->
+    <dialog class="sheet sheet--center" id="formDialog" aria-labelledby="formDialogTitle">
+      <form method="dialog">
+        <header class="sheet__head">
+          <h2 class="sheet__title" id="formDialogTitle">编辑</h2>
+        </header>
+        <div class="sheet__body" id="formDialogBody"></div>
+        <footer class="sheet__foot">
+          <button type="button" class="btn btn--danger" id="formDialogDelete" hidden>删除</button>
+          <span class="spacer"></span>
+          <button type="submit" value="cancel" class="btn">取消</button>
+          <button type="button" id="formDialogOk" class="btn btn--primary">确定</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- 标签输入：居中悬浮窗 -->
+    <dialog class="sheet sheet--center" id="tagDialog" aria-labelledby="tagDialogTitle">
+      <form method="dialog">
+        <header class="sheet__head">
+          <h2 class="sheet__title" id="tagDialogTitle">标签</h2>
+        </header>
+        <div class="sheet__body">
+          <input
+            type="text"
+            id="tagDialogInput"
+            class="input"
+            placeholder="用逗号分隔，例如：工作, 灵感"
+            autocomplete="off"
+          />
+        </div>
+        <footer class="sheet__foot">
+          <button type="submit" value="cancel" class="btn">取消</button>
+          <button type="button" id="btnTagSave" class="btn btn--primary">确定</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- 长按卡片弹出的操作菜单（手机端没有删除/收藏按钮，靠这个） -->
+    <dialog class="sheet sheet--center" id="cardDialog" aria-labelledby="cardDialogTitle">
+      <form method="dialog">
+        <header class="sheet__head">
+          <h2 class="sheet__title" id="cardDialogTitle">日记</h2>
+        </header>
+        <div class="sheet__body sheet__body--actions">
+          <button type="button" class="actionrow" id="btnCardPin">
+            <span class="actionrow__icon" id="cardPinIcon" aria-hidden="true"></span>
+            <span id="cardPinLabel">收藏</span>
+          </button>
+          <button type="button" class="actionrow actionrow--danger" id="btnCardDelete">
+            <span class="actionrow__icon" id="cardDeleteIcon" aria-hidden="true"></span>
+            <span>删除</span>
+          </button>
+        </div>
+        <footer class="sheet__foot">
+          <button type="submit" value="cancel" class="btn">取消</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- 统一的自定义确认弹窗（替代浏览器原生 confirm，风格与其它弹窗一致） -->
+    <dialog class="sheet sheet--center" id="confirmDialog" aria-labelledby="confirmTitle">
+      <form method="dialog">
+        <header class="sheet__head">
+          <h2 class="sheet__title" id="confirmTitle">确认</h2>
+        </header>
+        <div class="sheet__body">
+          <p class="hint" id="confirmMessage"></p>
+        </div>
+        <footer class="sheet__foot">
+          <button type="submit" value="cancel" class="btn">取消</button>
+          <button type="button" id="btnConfirmOk" class="btn btn--danger">确定</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div class="lightbox" id="lightbox" hidden><img id="lightboxImage" alt="" /></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <noscript><p class="hint">拾光日记需要 JavaScript 才能运行。</p></noscript>
+
+    <!-- 经典脚本，按依赖顺序加载；这样直接双击 index.html（file://）也能用 -->
+    <script src="js/aes.js"></script>
+    <script src="js/model.js"></script>
+    <script src="js/db.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/zip.js"></script>
+    <script src="js/importer.js"></script>
+    <script src="js/store.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>
