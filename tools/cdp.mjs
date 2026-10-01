@@ -181,17 +181,28 @@ export async function closeBrowser(instance) {
   if (!instance) return;
   const { child, profile } = instance;
   try {
-    if (child && child.pid) {
-      if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-      else child.kill('SIGKILL');
+    if (process.platform === 'win32' && profile) {
+      // Windows 上 Edge / Chrome 的启动器会和真正的浏览器进程解耦，taskkill /T 抓不全，
+      // 于是临时 profile 一直占着 C 盘。这里按「命令行里带这个 profile 路径」精确收掉。
+      const script =
+        `Get-CimInstance Win32_Process -Filter "Name='msedge.exe' or Name='chrome.exe'" | ` +
+        `Where-Object { $_.CommandLine -like '*${profile}*' } | ` +
+        `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+      spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'ignore' });
+    } else if (child && child.pid) {
+      child.kill('SIGKILL');
     }
   } catch (error) {
     /* 进程可能已经没了 */
   }
-  await new Promise((done) => setTimeout(done, 250));
-  try {
-    if (profile) rmSync(profile, { recursive: true, force: true });
-  } catch (error) {
-    /* 还有句柄没释放就留给系统清理 */
+  await new Promise((done) => setTimeout(done, 400));
+  for (let attempt = 0; attempt < 3 && profile; attempt += 1) {
+    try {
+      rmSync(profile, { recursive: true, force: true });
+      break;
+    } catch (error) {
+      // 句柄还没完全释放，等一下再删
+      await new Promise((done) => setTimeout(done, 500));
+    }
   }
 }
