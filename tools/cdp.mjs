@@ -3,8 +3,8 @@
  * 只用 Node 内置能力（child_process + 全局 WebSocket），不需要任何依赖。
  */
 
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -169,5 +169,29 @@ export async function launchBrowser(browser, extraArgs = []) {
     socket.addEventListener('error', () => reject(new Error('无法连接 DevTools')), { once: true });
   });
 
-  return { child, cdp: new Cdp(socket) };
+  return { child, cdp: new Cdp(socket), profile };
+}
+
+/**
+ * 收工：结束浏览器进程树并删掉临时 profile。
+ * Windows 上 Edge 的启动器会甩出一个后台进程，只 kill 启动器的话，浏览器会一直活着
+ * （临时 profile 也就一直占着 C 盘），所以这里用 taskkill /T 连子进程一起收掉。
+ */
+export async function closeBrowser(instance) {
+  if (!instance) return;
+  const { child, profile } = instance;
+  try {
+    if (child && child.pid) {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      else child.kill('SIGKILL');
+    }
+  } catch (error) {
+    /* 进程可能已经没了 */
+  }
+  await new Promise((done) => setTimeout(done, 250));
+  try {
+    if (profile) rmSync(profile, { recursive: true, force: true });
+  } catch (error) {
+    /* 还有句柄没释放就留给系统清理 */
+  }
 }

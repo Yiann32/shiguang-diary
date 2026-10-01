@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { findBrowser, launchBrowser } from './cdp.mjs';
+import { closeBrowser, findBrowser, launchBrowser } from './cdp.mjs';
 import { createStaticServer } from './serve.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -116,7 +116,8 @@ await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const base = `http://127.0.0.1:${server.address().port}`;
 console.log(`浏览器：${browser}`);
 
-const { child, cdp } = await launchBrowser(browser);
+const browserInstance = await launchBrowser(browser);
+const { cdp } = browserInstance;
 
 const setViewport = (sessionId, { width, height, scale, mobile = false }) =>
   cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile }, sessionId);
@@ -217,7 +218,7 @@ try {
   await settle(400);
   save('desktop-dark.png', await cdp.screenshot(session));
 } finally {
-  child.kill();
+  await closeBrowser(browserInstance);
   server.close();
 }
 

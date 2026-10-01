@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { findBrowser, launchBrowser } from './cdp.mjs';
+import { closeBrowser, findBrowser, launchBrowser } from './cdp.mjs';
 import { buildDemoMbk } from './mbk-fixture.mjs';
 import { createStaticServer } from './serve.mjs';
 
@@ -52,7 +52,8 @@ writeFileSync(mbkPath, buildDemoMbk('demo-pass'));
 console.log(`浏览器：${browser}`);
 console.log(`测试地址：${base}\n`);
 
-const { child, cdp } = await launchBrowser(browser);
+const browserInstance = await launchBrowser(browser);
+const { cdp } = browserInstance;
 const consoleErrors = [];
 let autoAcceptDialogs = false;
 
@@ -600,7 +601,7 @@ try {
 } catch (error) {
   check(`执行中断：${error.message}`, false);
 } finally {
-  child.kill();
+  await closeBrowser(browserInstance);
   server.close();
 }
 
