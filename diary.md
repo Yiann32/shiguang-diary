@@ -32,8 +32,10 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 - **日历**：右上角**一颗四态循环按钮**，点一下换一档「日记 → 记账 → 待办 → 排单」，每次切换弹一个绿色 toast 报状态；格子与下面的当天详情跟着模式变。左上角日期 = 选年月（原来那颗 shuffle 按钮已删），右边保留「回到今天」。
   - 日记模式：有记录的日子带底纹
   - 记账模式：格子里显示当天支出金额（`formatMoneyShort` 缩写），有收入的日子加一个 `calcellsig` 小点
-  - 待办模式：格子里显示未完成条数（`caldot`，逾期加 `caldot--overdue`）
-  - 排单模式：按约稿订单的**稿件截止日**显示当天要交的份数（`caldot--schedule`，拖期未完稿用 `caldot--overdue`），点进去列出当天要交的稿
+  - 待办模式：格子里显示 `未完成/总数`（`caldot`，全部完成用 `caldot--all-done`，逾期用 `caldot--overdue`），当天详情含已完成的
+  - 排单模式：**两行标记** —— 约稿按**稿件截止日**显示当天要交的份数（`caldot--schedule`，拖期未完稿 `caldot--overdue`）；待收款项按到账日显示笔数（`caldot--income`，浅红）。点进去上块「要交的稿」、下块「预计收到」金额
+  - 记账模式：格子右下角用 `calcellsq`（浅色小方块）标出当天要付的约稿尾款；详情区除流水外还会显示「约稿尾款预支出」（当天）与「本月尾款预支出」（没排到具体日期的 + 逾期的）
+  - 四种模式的详情区顶部都有 `.daynew`（小加号），按当前模式在当前选中日期新建
 - **记账**：本月概览（支出 / 收入 / 结余 + 预算进度）→ **约稿卡**（本月待付尾款 / 这个月预计收到 / 本月预计结余）→ 支出构成环形图 → 分类排行 → 按天分组的流水；右上角两个入口进「记账统计」和「账本设置」。右下角还有一个专属 FAB「记一笔」。
 - **约稿专区**（二级页，从约稿卡进）：顶部三态「支出 / 收入 / 资金压力」。
   - 支出 = 约稿订单（付给画师的尾款），点行编辑，点行上的「付款」生成一笔支出流水
@@ -67,6 +69,8 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 - 每个表的读写方法由 `js/db.js` 里的 `SIMPLE_STORES` 表驱动，用 `getAllXxx / putXxx / putManyXxx / removeXxx / clearXxx` 命名；三个适配器（IndexedDB / localStorage / 内存）共用同一套接口，**加新表时三个适配器都要补**。
 - 周期记账在 `store.init()` 和进入记账页时调 `materializeRecurring(today)` 补生成，靠 `ruleId + occurrenceKey` 幂等去重；`addRecurring` / `updateRecurring` 本身**不**补生成（否则测试没法用一个固定的 `today` 断言）。
 - 转账不计入收支合计（`sumLedger`），但会同时改两个账户的余额（`accountBalances`）。
+- `ensureBook()` 会**按名字补齐缺失的内置分类**（每个账本都跑一遍）：老库升级后才会自动补上「约稿 / 约稿收入」这类新预置。**别再改回「没有分类才灌」**，否则约稿付款会落到第一个分类（餐饮）——这个 bug 已经出现过一次。
+- 待收款项 ↔ 待办联动在 store 层（`syncReceivableTodo`）：填了到账日就建/更新待办，清空日期就撤掉，收齐自动完成，删待收连带删待办。待办靠 `receivableId` 反查。
 - 约稿订单有两套时间，别搞混：`deadline` 是**稿件截止日**（日历排单唯一依据），`dueMonth` / `dueDate` 是**尾款什么时候付**（专区按月分组用）。
 - 只有从订单上点「付款 / 收款」才会写 `paid` / `received`；手工在流水里记一笔不会回写订单。付款生成的支出流水带 `payableId`。
 - 导出 v3 会自动带上账本、分类、账户、预算、周期规则、待办与流水；导入兼容 v2（只有日记）。
@@ -129,6 +133,7 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 | 手机端顶部下移量 | 同文件手机媒体查询里的 `--top-shift` |
 | 日记排序 | `js/model.js` 的 `sortEntries` |
 | 待办排序 / 优先级 | `js/model.js` 的 `sortTodos` / `TODO_PRIORITIES` |
+| 待办完成统计口径 | `js/model.js` 的 `todoGroupStats`（近 7 天 / 本月 / 全部）与 `todoDoneByDay` |
 | 约稿状态与分组 | `js/model.js` 的 `commissionPayLabel` / `commissionGroups` / `commissionDueMap` |
 | 待收款项汇总 | `js/model.js` 的 `receivableTotals` / `clientStats` |
 | 日历四态的顺序与图标 | `js/app.js` 的 `CAL_MODES`（改顺序/加图标只动这一处） |

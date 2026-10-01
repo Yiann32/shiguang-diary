@@ -40,6 +40,7 @@
       commissionTab: 'payable',
       commissionQuery: '',
       hideClosed: false,
+      todoRange: 'week',
       subpage: null,
       pendingImport: null,
       installPrompt: null,
@@ -87,7 +88,6 @@
       todoInput: $('#todoInput'),
       todoEmpty: $('#todoEmpty'),
       btnTodoAdd: $('#btnTodoAdd'),
-      btnClearDoneTodos: $('#btnClearDoneTodos'),
       todoCard: $('#todoCard'),
       todoCount: $('#todoCount'),
       btnTodoMore: $('#btnTodoMore'),
@@ -96,7 +96,6 @@
       todoPageInput: $('#todoPageInput'),
       todoPageEmpty: $('#todoPageEmpty'),
       btnTodoPageAdd: $('#btnTodoPageAdd'),
-      btnTodoPageClear: $('#btnTodoPageClear'),
       btnTodoBack: $('#btnTodoBack'),
       btnTodoGroups: $('#btnTodoGroups'),
       btnCalDate: $('#btnCalDate'),
@@ -647,9 +646,12 @@
       }
 
       const moneyMap = mode === 'money' ? store.dayLedgerMap(state.calYear, state.calMonth) : null;
+      const payMap = mode === 'money' ? store.commissionPayDueMap(state.calYear, state.calMonth) : null;
       const todoMap = mode === 'todo' ? model.todoDueMap(store.todoList(), state.calYear, state.calMonth) : null;
       const commissionMap =
         mode === 'commission' ? store.commissionDueMap(state.calYear, state.calMonth) : null;
+      const incomeMap =
+        mode === 'commission' ? store.receivableDueMap(state.calYear, state.calMonth) : null;
 
       dom.calGrid.textContent = '';
       for (const week of model.monthGrid(state.calYear, state.calMonth)) {
@@ -668,6 +670,7 @@
             classes.push('calcell--stacked');
             const day = moneyMap.get(cell.date);
             const amount = day ? day.expense : 0;
+            const payDue = payMap.get(cell.date);
             children = [
               el('span', { class: 'calcell__num', text: label }),
               el('span', {
@@ -675,35 +678,55 @@
                 text: model.formatMoneyShort(amount) || '0',
               }),
               day && day.income > 0 ? el('span', { class: 'calcellsig' }) : null,
+              payDue ? el('span', { class: 'calcellsq' }) : null,
             ];
             title = day ? `${cell.date} · 支出 ${model.formatMoney(day.expense)} · 收入 ${model.formatMoney(day.income)}` : cell.date;
+            if (payDue) title += ` · 约稿尾款预支出 ${model.formatMoney(payDue.amount)}（${payDue.count} 笔）`;
           } else if (mode === 'todo') {
             classes.push('calcell--stacked');
-            const pending = todoMap.get(cell.date) || 0;
+            const day = todoMap.get(cell.date);
+            const pending = day ? day.pending : 0;
+            const total = day ? day.total : 0;
             children = [
               el('span', { class: 'calcell__num', text: label }),
-              pending
+              day
                 ? el('span', {
-                    class: `caldot${cell.date < today() ? ' caldot--overdue' : ''}`,
-                    text: String(pending),
+                    class: `caldot${
+                      pending === 0 ? ' caldot--all-done' : cell.date < today() ? ' caldot--overdue' : ''
+                    }`,
+                    text: `${pending}/${total}`,
                   })
                 : el('span', { class: 'calmoney is-empty', text: '0' }),
             ];
-            title = pending ? `${cell.date} · ${pending} 条待办` : cell.date;
+            title = day ? `${cell.date} · 未完成 ${pending} 条 / 共 ${total} 条` : cell.date;
           } else {
             classes.push('calcell--stacked');
             const cell2 = commissionMap.get(cell.date);
             const count = cell2 ? cell2.count : 0;
+            const income = incomeMap.get(cell.date);
+            const marks = [];
+            if (cell2) {
+              marks.push(
+                el('span', {
+                  class: `caldot${cell2.overdue ? ' caldot--overdue' : ' caldot--schedule'}`,
+                  text: String(count),
+                }),
+              );
+            }
+            if (income) {
+              marks.push(el('span', { class: 'caldot caldot--income', text: String(income.count) }));
+            }
             children = [
               el('span', { class: 'calcell__num', text: label }),
-              count
-                ? el('span', {
-                    class: `caldot${cell2.overdue ? ' caldot--overdue' : ' caldot--schedule'}`,
-                    text: String(count),
-                  })
-                : el('span', { class: 'calmoney is-empty', text: '0' }),
+              ...(marks.length ? marks : [el('span', { class: 'calmoney is-empty', text: '0' })]),
             ];
-            title = count ? `${cell.date} · ${count} 份稿要交` : cell.date;
+            title =
+              [
+                cell2 ? `${count} 份稿要交` : '',
+                income ? `${income.count} 笔到账` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ') || cell.date;
           }
           if (cell.date === today()) classes.push('is-today');
           if (cell.date === state.calSelected) classes.push('is-selected');
@@ -737,6 +760,7 @@
     function renderDayList() {
       const date = state.calSelected || today();
       dom.dayList.textContent = '';
+      dom.dayList.append(dayListCreateRow(date));
       if (state.calendarMode === 'money') {
         renderDayMoney(date);
         return;
@@ -910,6 +934,25 @@
       } catch (error) {
         /* 少数 WebView 不让压历史，忽略即可 */
       }
+    }
+
+    /** 详情区顶部常驻的新建入口：跟着当前模式与选中日期走 */
+    function dayListCreateRow(date) {
+      const actions = {
+        diary: { label: '新建这天的日记', run: () => startNewEntry(date) },
+        money: { label: '记一笔', run: () => openKeypad({ date }) },
+        todo: { label: '新增待办', run: () => openTodoDialog({ dueDate: date }) },
+        commission: { label: '新增约稿（截止这天）', run: () => openCommissionDialog({ deadline: date }) },
+      };
+      const action = actions[state.calendarMode] || actions.diary;
+      return el(
+        'button',
+        { type: 'button', class: 'daynew', onclick: () => action.run() },
+        [
+          el('span', { class: 'daynew__icon' }, [icon('plus', 15)]),
+          el('span', { class: 'daynew__text', text: `${action.label} · ${model.dateLabel(date, today())}` }),
+        ],
+      );
     }
 
     /** UI 按钮主动关一层：先把自己的记录出栈，再让浏览器回退（回退触发的 popstate 会被忽略） */
@@ -1089,7 +1132,14 @@
       }
 
       const input = el('input', {
-        type: field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text',
+        type:
+          field.type === 'number'
+            ? 'number'
+            : field.type === 'date'
+              ? 'date'
+              : field.type === 'time'
+                ? 'time'
+                : 'text',
         class: 'input',
         dataset: { field: field.key },
         value: field.value === undefined || field.value === null ? '' : String(field.value),
@@ -1149,7 +1199,9 @@
       const overdue = Boolean(todo.dueDate) && !todo.done && todo.dueDate < today();
       const meta = [];
       if (todo.dueDate) {
-        meta.push(`${model.dateLabel(todo.dueDate, today())}${overdue ? ' · 逾期' : ''}`);
+        meta.push(
+          `${model.dateLabel(todo.dueDate, today())}${todo.dueTime ? ` ${todo.dueTime}` : ''}${overdue ? ' · 逾期' : ''}`,
+        );
       }
       if (todo.priority) meta.push(model.priorityLabel(todo.priority));
 
@@ -1210,7 +1262,7 @@
       const stats = store.todoStats();
       dom.todoCount.textContent = stats.pending ? String(stats.pending) : '';
       dom.todoEmpty.hidden = pending.length > 0;
-      dom.btnClearDoneTodos.hidden = stats.done === 0;
+      dom.todoEmpty.textContent = stats.pending === 0 && stats.done > 0 ? '待办都做完了' : '还没有待办';
       dom.todoList.textContent = '';
       for (const todo of pending.slice(0, 6)) dom.todoList.append(todoRow(todo));
       if (pending.length > 6) {
@@ -1223,6 +1275,36 @@
     function renderDayMoney(date) {
       const items = store.ledgerOf(date);
       const totals = store.ledgerDayTotals(date);
+
+      // 约稿尾款：当天要付的 + 这个月还没排到具体日期的
+      const dueOrders = store.commissionsPayDueOn(date);
+      if (dueOrders.length) {
+        const sum = model.toMoney(dueOrders.reduce((total, item) => total + model.commissionRemaining(item), 0));
+        dom.dayList.append(
+          el('div', { class: 'dueinfo' }, [
+            el('span', { class: 'dueinfo__label', text: '约稿尾款预支出' }),
+            el('span', { class: 'dueinfo__value', text: `¥${model.formatMoney(sum)}` }),
+            el('span', { class: 'dueinfo__sub', text: `${dueOrders.length} 笔` }),
+          ]),
+          el('div', { class: 'mflow' }, dueOrders.map((item) => commissionRow(item, { hideDeadline: true }))),
+        );
+      }
+      const monthPending = store.commissionMonthPending(state.calYear, state.calMonth);
+      if (monthPending.total > 0) {
+        dom.dayList.append(
+          el('div', { class: 'dueinfo dueinfo--month' }, [
+            el('span', { class: 'dueinfo__label', text: '本月尾款预支出' }),
+            el('span', { class: 'dueinfo__value', text: `¥${model.formatMoney(monthPending.total)}` }),
+            el('span', {
+              class: 'dueinfo__sub',
+              text:
+                `${monthPending.count} 笔` +
+                (monthPending.overdue > 0 ? ` · 含逾期 ¥${model.formatMoney(monthPending.overdue)}` : ''),
+            }),
+          ]),
+        );
+      }
+
       dom.dayList.append(
         el('div', { class: 'daysum' }, [
           el('div', { class: 'daysum__item' }, [
@@ -1259,8 +1341,9 @@
     }
 
     function renderDayTodos(date) {
-      const items = store.todoList().filter((todo) => todo.dueDate === date);
-      const pending = items.filter((todo) => !todo.done);
+      const items = store.todosOnDate(date);
+      const pending = items.filter((todo) => !todo.done).length;
+      const done = items.length - pending;
       if (!items.length) {
         dom.dayList.append(
           el('div', { class: 'daylist__empty' }, [
@@ -1280,7 +1363,7 @@
       dom.dayList.append(
         el('div', { class: 'moneyflow__day' }, [
           el('span', { text: model.dateLabel(date, today()) }),
-          el('span', { text: `${pending.length} 条未完成` }),
+          el('span', { text: `${pending} 条未完成${done ? ` · ${done} 条已完成` : ''}` }),
         ]),
         el('div', { class: 'mflow' }, [list]),
       );
@@ -1289,7 +1372,8 @@
     /** 排单模式：这天要交的稿 */
     function renderDayCommissions(date) {
       const items = store.commissionsDueOn(date);
-      if (!items.length) {
+      const incomes = store.receivablesDueOn(date).filter((item) => model.receivableRemaining(item) > 0);
+      if (!items.length && !incomes.length) {
         dom.dayList.append(
           el('div', { class: 'daylist__empty' }, [
             el('p', { class: 'daylist__hint', text: '这天没有要交的稿' }),
@@ -1303,15 +1387,29 @@
         );
         return;
       }
-      const list = el('div', { class: 'mflow' });
-      for (const item of items) list.append(commissionRow(item, { hideDeadline: true }));
-      dom.dayList.append(
-        el('div', { class: 'moneyflow__day' }, [
-          el('span', { text: model.dateLabel(date, today()) }),
-          el('span', { text: `${items.length} 份稿要交` }),
-        ]),
-        list,
-      );
+      if (items.length) {
+        const list = el('div', { class: 'mflow' });
+        for (const item of items) list.append(commissionRow(item, { hideDeadline: true }));
+        dom.dayList.append(
+          el('div', { class: 'moneyflow__day' }, [
+            el('span', { text: model.dateLabel(date, today()) }),
+            el('span', { text: `${items.length} 份稿要交` }),
+          ]),
+          list,
+        );
+      }
+      if (incomes.length) {
+        const sum = model.toMoney(incomes.reduce((total, item) => total + model.receivableRemaining(item), 0));
+        const list = el('div', { class: 'mflow' });
+        for (const item of incomes) list.append(receivableRow(item));
+        dom.dayList.append(
+          el('div', { class: 'moneyflow__day' }, [
+            el('span', { text: '预计收到' }),
+            el('span', { text: `¥${model.formatMoney(sum)} · ${incomes.length} 笔` }),
+          ]),
+          list,
+        );
+      }
     }
 
     /** 二级页：按分组列出全部待办，可拖拽排序 */
@@ -1323,7 +1421,9 @@
       const groups = store.todoGroupsList();
       dom.todoPageBody.textContent = '';
       dom.todoPageEmpty.hidden = all.length > 0;
-      dom.btnTodoPageClear.hidden = done.length === 0;
+
+      // 顶部：打卡式的分组完成统计
+      dom.todoPageBody.append(todoStatsPanel());
 
       const buckets = [{ id: '', name: '默认清单' }, ...groups];
       for (const bucket of buckets) {
@@ -1345,17 +1445,76 @@
         dom.todoPageBody.append(list);
       }
 
-      if (done.length) {
+      // 已完成：按「完成那天」倒序分组，历史永久保留
+      const days = store.todoDoneByDay();
+      if (days.length) {
         dom.todoPageBody.append(
           el('div', { class: 'todo__grouphead' }, [
-            el('span', { class: 'todo__groupname', text: `已完成 ${done.length}` }),
+            el('span', { class: 'todo__groupname', text: `完成记录 · 共 ${done.length} 条` }),
           ]),
         );
-        const list = el('ul', { class: 'todo__list todo__list--page' });
-        for (const todo of done) list.append(todoRow(todo));
-        dom.todoPageBody.append(list);
+        for (const day of days) {
+          dom.todoPageBody.append(
+            el('div', { class: 'doneday' }, [
+              el('span', { class: 'doneday__date', text: model.dateLabel(day.date, today()) }),
+              el('span', { class: 'doneday__count', text: `完成了 ${day.items.length} 条` }),
+            ]),
+          );
+          const list = el('ul', { class: 'todo__list todo__list--page' });
+          for (const todo of day.items) list.append(todoRow(todo));
+          dom.todoPageBody.append(list);
+        }
       }
       bindTodoDrag();
+    }
+
+    /** 待办二级页顶部的完成统计（近 7 天 / 本月 / 全部） */
+    function todoStatsPanel() {
+      const panel = el('section', { class: 'panel' });
+      panel.append(el('h3', { class: 'section__title', text: '完成统计' }));
+      const ranges = [
+        { key: 'week', label: '近 7 天' },
+        { key: 'month', label: '本月' },
+        { key: 'all', label: '全部' },
+      ];
+      const group = el('div', { class: 'segmented segmented--mini todo-seg' });
+      for (const item of ranges) {
+        group.append(
+          el('button', {
+            type: 'button',
+            class: `segmented__item${state.todoRange === item.key ? ' is-active' : ''}`,
+            text: item.label,
+            onclick: () => {
+              state.todoRange = item.key;
+              renderTodoPage();
+            },
+          }),
+        );
+      }
+      panel.append(group);
+
+      const stats = store.todoGroupStats(state.todoRange);
+      if (!stats.total) {
+        panel.append(el('p', { class: 'hint', text: '这段时间还没有完成记录' }));
+        return panel;
+      }
+      for (const row of stats.rows) {
+        panel.append(
+          el('div', { class: 'lstats__row' }, [
+            el('div', { class: 'lstats__head' }, [
+              el('span', { class: 'lstats__name', text: row.name }),
+              el('span', { class: 'lstats__value', text: `完成 ${row.count} 次` }),
+            ]),
+            el('div', { class: 'lstats__track' }, [
+              el('span', {
+                class: 'lstats__fill',
+                style: { width: `${Math.round(row.ratio * 100)}%`, background: 'var(--accent)' },
+              }),
+            ]),
+          ]),
+        );
+      }
+      return panel;
     }
 
     /** 拖拽排序（pointer events，触屏和鼠标都能用） */
@@ -1416,7 +1575,13 @@
             value: todo ? todo.priority : draft.priority || 0,
             options: model.TODO_PRIORITIES.map((item) => ({ value: item.key, label: item.label })),
           },
-          { type: 'date', key: 'dueDate', label: '截止日期', value: todo ? todo.dueDate : draft.dueDate || '' },
+          {
+            type: 'date',
+            key: 'dueDate',
+            label: '截止日期',
+            value: todo ? todo.dueDate : draft.dueDate || today(),
+          },
+          { type: 'time', key: 'dueTime', label: '时间（可留空）', value: todo ? todo.dueTime : draft.dueTime || '' },
           {
             type: 'select',
             key: 'groupId',
@@ -1448,7 +1613,8 @@
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
-      await store.addTodo(text);
+      // 快速新增默认就是「今天的待办」，要改日期/时间去编辑里点
+      await store.addTodo({ text, dueDate: today() });
       input.focus();
     }
 
@@ -3420,10 +3586,6 @@
         event.preventDefault();
         void submitTodo('card');
       });
-      dom.btnClearDoneTodos.addEventListener('click', async () => {
-        const count = await store.clearDoneTodos();
-        if (count) toast(`已清除 ${count} 条已完成`, { tone: 'success' });
-      });
       dom.btnTodoMore.addEventListener('click', () => openSubpage('todo'));
       dom.btnTodoBack.addEventListener('click', () => closeSubpage());
       dom.btnTodoPageAdd.addEventListener('click', () => void submitTodo('page'));
@@ -3431,10 +3593,6 @@
         if (event.key !== 'Enter') return;
         event.preventDefault();
         void submitTodo('page');
-      });
-      dom.btnTodoPageClear.addEventListener('click', async () => {
-        const count = await store.clearDoneTodos();
-        if (count) toast(`已清除 ${count} 条已完成`, { tone: 'success' });
       });
       dom.btnTodoGroups.addEventListener('click', () => void openGroupManager());
 

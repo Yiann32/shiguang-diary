@@ -89,16 +89,63 @@
         return;
       }
       if (!books.some((book) => book.id === activeBookId)) activeBookId = books[0].id;
-      // 新账本或缺数据的账本补齐默认分类 / 账户，避免九宫格是空的
-      if (!categories.some((item) => item.bookId === activeBookId)) {
-        const seeded = model.createDefaultCategories(activeBookId);
-        categories = [...categories, ...seeded];
-        await writeTable('Categories', seeded);
+      // 按名字补齐缺失的内置分类：老库升级后也能补上「约稿」这类新预置，
+      // 只补不删，用户改过名的分类不会被动。
+      const missing = [];
+      for (const book of books) {
+        const existing = new Set(
+          categories.filter((item) => item.bookId === book.id).map((item) => `${item.kind}:${item.name}`),
+        );
+        let order = categories
+          .filter((item) => item.bookId === book.id)
+          .reduce((max, item) => Math.max(max, Number(item.order) || 0), 0);
+        for (const preset of model.createDefaultCategories(book.id)) {
+          const key = `${preset.kind}:${preset.name}`;
+          if (existing.has(key)) continue;
+          existing.add(key);
+          order += 1;
+          missing.push({ ...preset, order: order + 1000 });
+        }
+      }
+      if (missing.length) {
+        categories = [...categories, ...missing];
+        await writeTable('Categories', missing);
       }
       if (!accounts.some((item) => item.bookId === activeBookId)) {
         const seeded = model.createDefaultAccounts(activeBookId);
         accounts = [...accounts, ...seeded];
         await writeTable('Accounts', seeded);
+      }
+    };
+
+    /** 找分类；找不到就按名字建一个（老库升级后也能用） */
+    const ensureCategory = async (kind, name, icon) => {
+      const found = store.categories(kind).find((row) => row.name === name);
+      if (found) return found.id;
+      const created = await store.addCategory({ kind, name, icon });
+      return created ? created.id : '';
+    };
+
+    /**
+     * 待收款项 ↔ 待办联动：填了约定到账日就挂一条待办，
+     * 收齐自动完成，日期清空就把待办撤掉。
+     */
+    const syncReceivableTodo = async (item) => {
+      const linked = todos.find((todo) => todo.receivableId === item.id);
+      const remaining = model.receivableRemaining(item);
+      if (!(remaining > 0)) {
+        if (linked && !linked.done) await store.updateTodo(linked.id, { done: true, doneAt: Date.now() });
+        return;
+      }
+      if (!item.dueDate) {
+        if (linked) await store.removeTodo(linked.id);
+        return;
+      }
+      const text = `收款：${item.client || '待收'} ¥${model.formatMoney(remaining)}`;
+      if (linked) {
+        await store.updateTodo(linked.id, { text, dueDate: item.dueDate });
+      } else {
+        await store.addTodo({ text, dueDate: item.dueDate, receivableId: item.id });
       }
     };
 
@@ -875,6 +922,23 @@
         return model.commissionDueOn(store.commissionList(), date);
       },
 
+      /** 某天要付掉尾款的订单（记账模式的当天详情用） */
+      commissionsPayDueOn(date) {
+        return store
+          .commissionList()
+          .filter((item) => !model.isCommissionSettled(item) && item.dueDate === date);
+      },
+
+      /** 日历（记账模式）用：某个月每天要付的约稿尾款 */
+      commissionPayDueMap(year, month) {
+        return model.commissionPayDueMap(store.commissionList(), year, month);
+      },
+
+      /** 没排到具体某天的尾款（含逾期）：详情区那行「本月尾款预支出」 */
+      commissionMonthPending(year, month) {
+        return model.commissionMonthPending(store.commissionList(), year, month, model.todayKey());
+      },
+
       /** 资金压力：预计收入 − 固定支出 − 本月待付尾款 */
       pressure(year, month) {
         const plan = (Diary.settings && Diary.settings.loadSettings().pressure) || {};
@@ -942,9 +1006,7 @@
         const accounts = store.accounts();
         const accountId = config.accountId || (accounts[0] ? accounts[0].id : '');
         const payCategory =
-          config.categoryId ||
-          (store.categories('expense').find((row) => row.name === '约稿') || store.categories('expense')[0] || {}).id ||
-          '';
+          config.categoryId || (await ensureCategory('expense', '约稿', '🎨'));
 
         const entry = await store.addLedger({
           type: 'expense',
@@ -984,6 +1046,11 @@
         return model.receivablesDueOn(scoped(receivables), date);
       },
 
+      /** 日历（排单模式）用：某个月每天的到账笔数 */
+      receivableDueMap(year, month) {
+        return model.receivableDueMap(store.receivableList(), year, month, model.todayKey());
+      },
+
       clientStats() {
         return model.clientStats(store.receivableList(), model.todayKey());
       },
@@ -997,6 +1064,7 @@
         if (!(item.amount > 0)) return null;
         receivables = model.sortReceivables([...receivables, item]);
         await writeOne('Receivables', item);
+        await syncReceivableTodo(item);
         emit();
         return item;
       },
@@ -1012,6 +1080,7 @@
         if (!(next.amount > 0)) return store.removeReceivable(id);
         receivables = model.sortReceivables(receivables.map((item) => (item.id === id ? next : item)));
         await writeOne('Receivables', next);
+        await syncReceivableTodo(next);
         emit();
         return next;
       },
@@ -1020,6 +1089,7 @@
         const existed = receivables.some((item) => item.id === id);
         receivables = receivables.filter((item) => item.id !== id);
         await call('removeReceivables', id);
+        for (const todo of todos.filter((item) => item.receivableId === id)) await store.removeTodo(todo.id);
         emit();
         return existed;
       },
@@ -1046,9 +1116,7 @@
           date,
           time: model.toTimeKey(Date.now()),
           categoryId:
-            config.categoryId ||
-            (store.categories('income').find((row) => row.name === '约稿收入') || store.categories('income')[0] || {}).id ||
-            '',
+            config.categoryId || (await ensureCategory('income', '约稿收入', '🖌️')),
           accountId,
           note: [item.client, item.title].filter(Boolean).join(' · ') || '约稿收款',
         });
@@ -1059,6 +1127,7 @@
         );
         receivables = model.sortReceivables(receivables.map((row) => (row.id === id ? next : row)));
         await writeOne('Receivables', next);
+        await syncReceivableTodo(next);
         emit();
         return { receivable: next, entry, amount, settled: model.isReceivableSettled(next) };
       },
@@ -1069,6 +1138,30 @@
 
       todosDueOn(date) {
         return model.sortTodos(todos.filter((item) => item.dueDate === date && !item.done));
+      },
+
+      /** 某一天的全部待办（含已完成）：有时间的按时间排前面 */
+      todosOnDate(date) {
+        const items = todos.filter((item) => item.dueDate === date);
+        return [
+          ...model.sortTodosForDay(items.filter((item) => !item.done)),
+          ...model.sortTodosForDay(items.filter((item) => item.done), 'done'),
+        ];
+      },
+
+      /** 日历格子用：某个月每天 未完成/已完成/总数 */
+      todoDueMap(year, month) {
+        return model.todoDueMap(todos, year, month);
+      },
+
+      /** 打卡式的分组完成统计 */
+      todoGroupStats(range) {
+        return model.todoGroupStats(todos, todoGroups, { range: range || 'all', today: model.todayKey() });
+      },
+
+      /** 已完成的待办按天倒序分组 */
+      todoDoneByDay() {
+        return model.todoDoneByDay(todos);
       },
 
       todoGroupsList() {

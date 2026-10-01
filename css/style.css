@@ -2172,6 +2172,129 @@ body[data-tab='money'] .fab--money {
   color: var(--accent);
 }
 
+/* 待办：当天全部完成 → 弱化；待收：浅红 */
+.caldot--all-done {
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+
+.caldot--income {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 格子里放两行标记时把徽标压小一点，避免撑破格子 */
+.calcell--stacked .caldot {
+  height: 0.95rem;
+  min-width: 1.1rem;
+  padding: 0 4px;
+  font-size: 0.56rem;
+}
+
+/* 记账模式：当天有约稿尾款要付的浅色小方块 */
+.calcellsq {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--danger-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+/* 详情区顶部的常驻新建入口 */
+.daynew {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.daynew:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.daynew__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.daynew__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 约稿尾款预支出 / 本月尾款预支出 */
+.dueinfo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.dueinfo__label {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+.dueinfo__value {
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--danger);
+}
+
+.dueinfo__sub {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}
+
+/* 完成记录按天分组的小标题 */
+.doneday {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px 0 2px;
+  font-size: 0.74rem;
+  color: var(--text-faint);
+}
+
+.doneday__count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 二级页统计里的分档控件不要撑满整行 */
+.todo-seg {
+  margin-bottom: 10px;
+}
+
 .calcell.is-today .caldot {
   background: rgba(255, 255, 255, 0.3);
   color: #fff;

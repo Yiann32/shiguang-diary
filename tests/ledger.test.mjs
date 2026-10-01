@@ -272,7 +272,7 @@ test('待办：未完成在前按手动顺序，已完成按完成时间归档',
   assert.equal(todoStats([normalizeTodo({ text: 'X', dueDate: '2026-09-01' })], '2026-10-01').overdue, 1);
 });
 
-test('待办：日历格子只统计当月未完成的数量', () => {
+test('待办：日历格子统计当月每天的 未完成/已完成/总数', () => {
   const todos = [
     normalizeTodo({ text: 'a', dueDate: '2026-10-01' }),
     normalizeTodo({ text: 'b', dueDate: '2026-10-01' }),
@@ -280,8 +280,106 @@ test('待办：日历格子只统计当月未完成的数量', () => {
     normalizeTodo({ text: 'd', dueDate: '2026-11-01' }),
   ];
   const map = todoDueMap(todos, 2026, 9);
-  assert.equal(map.get('2026-10-01'), 2);
+  assert.deepEqual(map.get('2026-10-01'), { pending: 2, done: 1, total: 3 });
   assert.equal(map.size, 1);
+});
+
+test('待办：具体时间可空，只填时间自动落到今天', () => {
+  const withTime = normalizeTodo({ text: 'A', dueDate: '2026-10-08', dueTime: '14:30' });
+  assert.equal(withTime.dueTime, '14:30');
+  assert.equal(withTime.dueDate, '2026-10-08');
+
+  const timeOnly = normalizeTodo({ text: 'B', dueTime: '09:05' });
+  assert.equal(timeOnly.dueTime, '09:05');
+  assert.equal(timeOnly.dueDate, model.toDateKey(Date.now()), '只填时间要有今天兜底');
+
+  const bad = normalizeTodo({ text: 'C', dueDate: '2026-10-08', dueTime: '25:99' });
+  assert.equal(bad.dueTime, '');
+  assert.equal(bad.dueDate, '2026-10-08');
+});
+
+test('待办：某一天排序时有时间的在前，按时间升序', () => {
+  const list = [
+    normalizeTodo({ id: 'a', text: 'A', dueDate: '2026-10-08', order: 1 }),
+    normalizeTodo({ id: 'b', text: 'B', dueDate: '2026-10-08', dueTime: '18:00', order: 2 }),
+    normalizeTodo({ id: 'c', text: 'C', dueDate: '2026-10-08', dueTime: '09:00', order: 3 }),
+  ];
+  assert.deepEqual(model.sortTodosForDay(list).map((item) => item.id), ['c', 'b', 'a']);
+});
+
+test('待办：打卡式分组完成统计（近 7 天 / 本月 / 全部）', () => {
+  const groups = [model.normalizeTodoGroup({ id: 'g1', name: '工作' }), model.normalizeTodoGroup({ id: 'g2', name: '生活' })];
+  const at = (day, hour = 10) => Date.parse(`2026-10-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:00:00`);
+  const todos = [
+    normalizeTodo({ id: 't1', text: 'A', done: true, doneAt: at(1), groupId: 'g1' }),
+    normalizeTodo({ id: 't2', text: 'B', done: true, doneAt: at(2), groupId: 'g1' }),
+    normalizeTodo({ id: 't3', text: 'C', done: true, doneAt: at(3), groupId: 'g2' }),
+    normalizeTodo({ id: 't4', text: 'D', done: true, doneAt: at(20), groupId: 'g1' }), // 上个月的旧记录
+    normalizeTodo({ id: 't5', text: 'E', done: true, doneAt: at(1) }), // 没分组
+    normalizeTodo({ id: 't6', text: 'F', dueDate: '2026-10-08' }), // 没完成的，不计
+  ];
+  const all = model.todoGroupStats(todos, groups, { range: 'all', today: '2026-10-08' });
+  assert.equal(all.total, 5);
+  assert.deepEqual(all.rows[0], { groupId: 'g1', name: '工作', count: 3, ratio: 1 });
+  assert.equal(all.rows.find((row) => row.groupId === 'g2').count, 1);
+  assert.equal(all.rows.find((row) => row.groupId === '').count, 1);
+
+  const week = model.todoGroupStats(todos, groups, { range: 'week', today: '2026-10-08' });
+  assert.equal(week.total, 2, '近 7 天=今天往前数 7 天（含今天），10-01 与 9 月那条都不算');
+  const day2 = model.todoGroupStats(todos, groups, { range: 'week', today: '2026-10-02' });
+  assert.equal(day2.total, 3, '以 10-02 为今天时窗口覆盖 09-26 起，10-01 的两条也算进来');
+
+  // 分组被删掉后，成员算进「默认清单」
+  const orphan = model.todoGroupStats(todos, [], { range: 'all', today: '2026-10-08' });
+  assert.equal(orphan.rows.length, 1);
+  assert.equal(orphan.rows[0].name, '默认清单');
+  assert.equal(orphan.rows[0].count, 5);
+});
+
+test('待办：已完成按完成那天倒序分组', () => {
+  const at = (day, hour) => Date.parse(`2026-10-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:00:00`);
+  const todos = [
+    normalizeTodo({ id: 'a', text: 'A', done: true, doneAt: at(2, 9) }),
+    normalizeTodo({ id: 'b', text: 'B', done: true, doneAt: at(2, 20) }),
+    normalizeTodo({ id: 'c', text: 'C', done: true, doneAt: at(3, 10) }),
+    normalizeTodo({ id: 'd', text: 'D', dueDate: '2026-10-03' }),
+  ];
+  const days = model.todoDoneByDay(todos);
+  assert.deepEqual(days.map((day) => day.date), ['2026-10-03', '2026-10-02']);
+  assert.deepEqual(days[1].items.map((item) => item.id), ['b', 'a'], '同一天按完成时间倒序');
+});
+
+test('日历索引：待收到账与约稿尾款预支出', () => {
+  const receivables = [
+    model.normalizeReceivable({ id: 'r1', client: '甲', amount: 1500, dueDate: '2026-10-08' }),
+    model.normalizeReceivable({ id: 'r2', client: '乙', amount: 500, received: 500, dueDate: '2026-10-08' }),
+    model.normalizeReceivable({ id: 'r3', client: '丙', amount: 900, dueDate: '2026-10-20' }),
+  ];
+  const incomeMap = model.receivableDueMap(receivables, 2026, 9, '2026-10-15');
+  assert.deepEqual(incomeMap.get('2026-10-08'), { count: 1, overdue: 1 }, '结清的不算');
+  assert.deepEqual(incomeMap.get('2026-10-20'), { count: 1, overdue: 0 });
+
+  const commissions = [
+    model.normalizeCommission({ id: 'c1', title: 'A', total: 2000, paid: 800, dueDate: '2026-10-08' }),
+    model.normalizeCommission({ id: 'c2', title: 'B', total: 1000, dueMonth: '2026-10' }),
+    model.normalizeCommission({ id: 'c3', title: 'C', total: 700 }),
+    model.normalizeCommission({ id: 'c4', title: 'D', total: 300, dueDate: '2026-09-01' }), // 逾期
+    model.normalizeCommission({ id: 'c5', title: 'E', total: 400, paid: 400, dueDate: '2026-10-08' }), // 已结清
+    model.normalizeCommission({ id: 'c6', title: 'F', total: 600, dueMonth: '2026-12' }),
+  ];
+  const payMap = model.commissionPayDueMap(commissions, 2026, 9);
+  assert.deepEqual(payMap.get('2026-10-08'), { count: 1, amount: 1200 });
+  assert.equal(payMap.size, 1);
+
+  const month = model.commissionMonthPending(commissions, 2026, 9, '2026-10-01');
+  assert.equal(month.total, 1000 + 700 + 300, '当月只填月份的 + 完全没填的 + 逾期');
+  assert.equal(month.overdue, 300);
+  assert.equal(month.count, 3);
+
+  // 到了 10-15 再算：10-08 那笔也就逾期了，一并计入本月要掏的钱
+  const later = model.commissionMonthPending(commissions, 2026, 9, '2026-10-15');
+  assert.equal(later.overdue, 300 + 1200);
+  assert.equal(later.total, later.overdue + 1000 + 700);
 });
 
 /* ---------------------------------------------------------- 仓库层 */
@@ -898,3 +996,78 @@ test('备份 v3 里带上约稿订单', () => {
   const parsed = model.parseImport(JSON.stringify(payload));
   assert.equal(parsed.payables.length, 1);
 });
+
+/* ------------------------------------------- 老库升级 / 待收联动待办 */
+
+test('老库升级：自动补齐缺失的「约稿」分类，付款记成约稿而不是餐饮', async () => {
+  const storage = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+    setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: (key) => storage.delete(key),
+  };
+  try {
+    // 模拟 v5 的老库：只有老的内置分类，没有「约稿」
+    const book = { id: 'b1', name: '日常账本', createdAt: 1 };
+    const legacyCategories = model
+      .createDefaultCategories('b1')
+      .filter((item) => item.name !== '约稿' && item.name !== '约稿收入');
+    localStorage.setItem('diary:books', JSON.stringify([book]));
+    localStorage.setItem('diary:categories', JSON.stringify(legacyCategories));
+    localStorage.setItem('diary:accounts', JSON.stringify([{ id: 'a1', bookId: 'b1', name: '现金', kind: 'cash', initialBalance: 0, order: 1 }]));
+
+    const store = createStore(db.createLocalStorageAdapter());
+    await store.init();
+    assert.equal(store.categories('expense').some((item) => item.name === '约稿'), true, '缺的预置分类要补上');
+    assert.equal(store.categories('income').some((item) => item.name === '约稿收入'), true);
+
+    const order = await store.addCommission({ title: '双人半身', total: 1000, dueDate: todayKeyish() });
+    await store.settleCommission(order.id, { amount: 200 });
+    const entry = store.ledgerList()[0];
+    assert.equal(store.categoryById(entry.categoryId).name, '约稿');
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+
+test('待收款项 ↔ 待办联动：建、改期、清空、收齐、删除', async () => {
+  const store = await memoryStore();
+  const item = await store.addReceivable({ client: '甲方 A', title: '封面', amount: 1500, dueDate: '2026-10-20' });
+  assert.equal(store.todoList().length, 1, '填了到账日就自动建待办');
+  assert.equal(store.todoList()[0].dueDate, '2026-10-20');
+  assert.equal(store.todoList()[0].receivableId, item.id);
+  assert.match(store.todoList()[0].text, /甲方 A/);
+  assert.match(store.todoList()[0].text, /1,500/);
+
+  // 没有到账日的待收不建待办
+  const undated = await store.addReceivable({ client: '乙方', amount: 300 });
+  assert.equal(store.todoList().length, 1);
+
+  // 改日期 → 待办跟着改
+  await store.updateReceivable(item.id, { dueDate: '2026-11-05' });
+  assert.equal(store.todoList()[0].dueDate, '2026-11-05');
+
+  // 部分收款 → 文案里的剩余金额跟着变
+  await store.settleReceivable(item.id, { amount: 500 });
+  assert.match(store.todoList()[0].text, /1,000/);
+  assert.equal(store.todoList()[0].done, false);
+
+  // 收齐 → 待办自动完成
+  await store.settleReceivable(item.id, {});
+  assert.equal(store.todoList().find((todo) => todo.receivableId === item.id).done, true);
+
+  // 清空到账日 → 关联待办撤掉
+  await store.updateReceivable(undated.id, { dueDate: '2026-10-09' });
+  assert.equal(store.todoList().length, 2);
+  await store.updateReceivable(undated.id, { dueDate: '' });
+  assert.equal(store.todoList().filter((todo) => todo.receivableId === undated.id).length, 0);
+
+  // 删除待收 → 连带删掉待办
+  await store.updateReceivable(item.id, { received: 0, dueDate: '2026-10-20' });
+  await store.removeReceivable(item.id);
+  assert.equal(store.todoList().some((todo) => todo.receivableId === item.id), false);
+});
+
+function todayKeyish() {
+  return model.toDateKey(Date.now());
+}

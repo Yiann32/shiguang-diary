@@ -643,18 +643,35 @@
     const createdAt = toTimestamp(source.createdAt, now);
     const done = Boolean(source.done);
     const due = toText(source.dueDate).trim();
+    const time = toText(source.dueTime).trim();
+    const dueTime = TIME_KEY_RE.test(time) ? time : '';
     return {
       id: toText(source.id).trim() || createId(),
       text: toText(source.text).trim().slice(0, 120),
       note: toText(source.note).trim().slice(0, 200),
       priority: normalizePriority(source.priority),
-      dueDate: isValidDateKey(due) ? due : '',
+      // 有时间就必须有日期：只填了时间就落到今天
+      dueDate: isValidDateKey(due) ? due : dueTime ? toDateKey(now) : '',
+      dueTime,
       groupId: toText(source.groupId).trim(),
+      receivableId: toText(source.receivableId).trim(),
       order: toTimestamp(source.order, createdAt),
       done,
       doneAt: done ? toTimestamp(source.doneAt, now) : null,
       createdAt,
     };
+  }
+
+  /** 某一天的待办：有时间的按时间排前面，没时间的按手动顺序 */
+  function sortTodosForDay(list, mode = 'pending') {
+    return [...(list || [])].sort((a, b) => {
+      const leftTime = toText(a && a.dueTime);
+      const rightTime = toText(b && b.dueTime);
+      if (Boolean(leftTime) !== Boolean(rightTime)) return leftTime ? -1 : 1;
+      if (leftTime !== rightTime) return leftTime < rightTime ? -1 : 1;
+      if (mode === 'done') return (b.doneAt || 0) - (a.doneAt || 0);
+      return (Number(a.order) || 0) - (Number(b.order) || 0) || (b.createdAt || 0) - (a.createdAt || 0);
+    });
   }
 
   function normalizeTodoGroup(raw, now = Date.now()) {
@@ -690,11 +707,90 @@
     const prefix = monthKey(year, month);
     const map = new Map();
     for (const todo of todos || []) {
-      if (!todo || todo.done || !isValidDateKey(todo.dueDate)) continue;
+      if (!todo || !isValidDateKey(todo.dueDate)) continue;
       if (!toText(todo.dueDate).startsWith(prefix)) continue;
-      map.set(todo.dueDate, (map.get(todo.dueDate) || 0) + 1);
+      const cell = map.get(todo.dueDate) || { pending: 0, done: 0, total: 0 };
+      if (todo.done) cell.done += 1;
+      else cell.pending += 1;
+      cell.total += 1;
+      map.set(todo.dueDate, cell);
     }
     return map;
+  }
+
+  /** 统计范围的时间边界（含今天；「近 7 天」不把未来的记录算进来） */
+  function todoRangeBounds(range, today) {
+    const todayDate = parseDateKey(today) || new Date();
+    if (range === 'week') {
+      const start = new Date(todayDate);
+      start.setDate(start.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(todayDate);
+      end.setHours(23, 59, 59, 999);
+      return { from: start.getTime(), to: end.getTime() };
+    }
+    if (range === 'month') {
+      return {
+        from: new Date(todayDate.getFullYear(), todayDate.getMonth(), 1).getTime(),
+        to: new Date(todayDate.getFullYear(), todayDate.getMonth() + 1, 0, 23, 59, 59, 999).getTime(),
+      };
+    }
+    return { from: 0, to: Infinity };
+  }
+
+  /**
+   * 打卡式的分组完成统计：每个分组完成了多少次。
+   * 没分组的归「默认清单」；分组被删掉的成员也算默认。
+   */
+  function todoGroupStats(todos, groups, options) {
+    const config = options || {};
+    const range = config.range || 'all';
+    const today = config.today || todayKey();
+    const { from, to } = todoRangeBounds(range, today);
+    const nameOf = new Map((groups || []).filter((g) => g && g.id).map((g) => [g.id, g.name]));
+
+    const rows = new Map();
+    for (const id of nameOf.keys()) rows.set(id, { groupId: id, name: nameOf.get(id), count: 0 });
+    rows.set('', { groupId: '', name: '默认清单', count: 0 });
+
+    let total = 0;
+    for (const todo of todos || []) {
+      if (!todo || !todo.done) continue;
+      const at = Number(todo.doneAt) || 0;
+      if (!at || at < from || at > to) continue;
+      const groupId = todo.groupId && nameOf.has(todo.groupId) ? todo.groupId : '';
+      const row = rows.get(groupId);
+      if (!row) continue;
+      row.count += 1;
+      total += 1;
+    }
+
+    const list = [...rows.values()].filter((row) => row.groupId || row.count > 0);
+    const max = Math.max(1, ...list.map((row) => row.count));
+    return {
+      total,
+      rows: list
+        .map((row) => ({ ...row, ratio: row.count / max }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN')),
+    };
+  }
+
+  /** 已完成的待办按「完成那天」倒序分组，组内按完成时间倒序 */
+  function todoDoneByDay(todos) {
+    const groups = new Map();
+    for (const todo of todos || []) {
+      if (!todo || !todo.done) continue;
+      const date = toDateKey(Number(todo.doneAt) || Date.now());
+      if (!date) continue;
+      if (!groups.has(date)) groups.set(date, []);
+      groups.get(date).push(todo);
+    }
+    return [...groups.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(([date, items]) => ({
+        date,
+        items: items.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)),
+      }));
   }
 
   function todoStats(todos, today = todayKey()) {
@@ -841,6 +937,22 @@
 
   function receivablesDueOn(list, date) {
     return sortReceivables((list || []).filter((item) => item.dueDate === date));
+  }
+
+  /** 日历（排单模式）用：某个月每一天有几笔待收到账（浅红数字） */
+  function receivableDueMap(list, year, month, today = todayKey()) {
+    const prefix = monthKey(year, month);
+    const map = new Map();
+    for (const item of list || []) {
+      if (!item || !isValidDateKey(item.dueDate)) continue;
+      if (receivableRemaining(item) <= 0) continue;
+      if (!toText(item.dueDate).startsWith(prefix)) continue;
+      const cell = map.get(item.dueDate) || { count: 0, overdue: 0 };
+      cell.count += 1;
+      if (item.dueDate < today) cell.overdue += 1;
+      map.set(item.dueDate, cell);
+    }
+    return map;
   }
 
   /** 按甲方聚合：还欠我多少、已经结了多少 */
@@ -1108,6 +1220,54 @@
   /** 某天的稿件是不是已经拖过期了（还没画完） */
   function isCommissionOverdue(item, today = todayKey()) {
     return Boolean(item && item.deadline) && !item.done && item.deadline < today;
+  }
+
+  /** 日历（记账模式）用：某个月每一天要付掉的约稿尾款 */
+  function commissionPayDueMap(list, year, month) {
+    const prefix = monthKey(year, month);
+    const map = new Map();
+    for (const item of list || []) {
+      if (!item || isCommissionSettled(item)) continue;
+      if (!isValidDateKey(item.dueDate)) continue;
+      if (!item.dueDate.startsWith(prefix)) continue;
+      const remaining = commissionRemaining(item);
+      if (!(remaining > 0)) continue;
+      const cell = map.get(item.dueDate) || { count: 0, amount: 0 };
+      cell.count += 1;
+      cell.amount = toMoney(cell.amount + remaining);
+      map.set(item.dueDate, cell);
+    }
+    return map;
+  }
+
+  /**
+   * 「本月尾款预支出」：没排到具体某一天、但本月要掏的钱。
+   * 含两类：只填了月份（等于当月）或完全没填时间的；以及已经逾期未付的。
+   */
+  function commissionMonthPending(list, year, month, today = todayKey()) {
+    const prefix = monthKey(year, month);
+    let total = 0;
+    let overdue = 0;
+    let count = 0;
+    for (const item of list || []) {
+      if (!item || isCommissionSettled(item)) continue;
+      const remaining = commissionRemaining(item);
+      if (!(remaining > 0)) continue;
+      if (item.dueDate) {
+        // 有具体日期：逾期的也算进「本月要掏的」，其余落到那一天
+        if (item.dueDate < today) {
+          overdue += remaining;
+          total += remaining;
+          count += 1;
+        }
+        continue;
+      }
+      if (!item.dueMonth || item.dueMonth === prefix) {
+        total += remaining;
+        count += 1;
+      }
+    }
+    return { total: toMoney(total), overdue: toMoney(overdue), count };
   }
 
   /* --------------------------------------------------------- 资金压力 */
@@ -1747,6 +1907,8 @@
     commissionDueOn,
     commissionGroups,
     commissionMonthTotal,
+    commissionMonthPending,
+    commissionPayDueMap,
     commissionPayKey,
     commissionPayLabel,
     commissionPayMonth,
@@ -1830,11 +1992,15 @@
     toTimeKey,
     todayKey,
     todoDueMap,
+    todoDoneByDay,
+    todoGroupStats,
     todoStats,
+    sortTodosForDay,
     receivableRemaining,
     receivableStatus,
     receivableStatusLabel,
     receivableTotals,
+    receivableDueMap,
     receivablesDueOn,
     sortReceivables,
     sumReceivables,

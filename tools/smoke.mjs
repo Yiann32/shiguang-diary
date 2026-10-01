@@ -54,6 +54,17 @@ console.log(`测试地址：${base}\n`);
 
 const browserInstance = await launchBrowser(browser);
 const { cdp } = browserInstance;
+
+/** 把日历切到指定模式（循环按钮点几下，比数次数稳） */
+const setCalendarMode = async (label, sessionId) => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const current = await cdp.evaluate('document.querySelector("#calModeText").textContent', sessionId);
+    if (current === label) return true;
+    await cdp.evaluate('document.querySelector("#btnCalMode").click()', sessionId);
+    await new Promise((done) => setTimeout(done, 60));
+  }
+  return false;
+};
 const consoleErrors = [];
 let autoAcceptDialogs = false;
 
@@ -468,6 +479,46 @@ try {
       session,
     ),
   );
+  check(
+    '约稿付款的流水分类是「约稿」而不是「餐饮」',
+    await cdp.evaluate(
+      `new Promise((resolve) => {
+        const request = indexedDB.open('diary-db');
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction(['ledger', 'categories'], 'readonly');
+          const ledger = tx.objectStore('ledger').getAll();
+          const categories = tx.objectStore('categories').getAll();
+          tx.oncomplete = () => {
+            const entry = ledger.result.find((item) => item.payableId && item.amount === 800);
+            const category = entry && categories.result.find((item) => item.id === entry.categoryId);
+            resolve(Boolean(category) && category.name === '约稿');
+          };
+          tx.onerror = () => resolve(false);
+        };
+        request.onerror = () => resolve(false);
+      })`,
+      session,
+    ),
+  );
+
+  // 再建一笔「只填月份」的订单：它不进日历格子，只汇总成「本月尾款预支出」
+  await cdp.evaluate('document.querySelector("#btnCommissionNew").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '第二笔约稿表单' });
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="title"]', '场景插画'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="artist"]', '小满'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="total"]', '1500'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="dueMonth"]', todayIso.slice(0, 7)), session);
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await new Promise((done) => setTimeout(done, 500));
+  check(
+    '只填月份的约稿也能建出来（落在「本月要付」里）',
+    await cdp.evaluate(
+      `document.querySelector('#commissionBody').textContent.includes('场景插画')
+        && document.querySelector('#commissionBody').textContent.includes('本月要付')`,
+      session,
+    ),
+  );
 
   // 日历四态：右上角一颗按钮循环切，每切一次弹绿色状态气泡
   await cdp.evaluate('document.querySelector("[data-tab=\'calendar\']").click()', session);
@@ -491,6 +542,18 @@ try {
         const cell = document.querySelector('.calcell.is-today .calmoney');
         return Boolean(cell) && cell.textContent.includes('12.5');
       })()`,
+      session,
+    ),
+  );
+  check(
+    '记账模式的格子里出现约稿尾款预支出的浅色小方块',
+    await cdp.evaluate(`Boolean(document.querySelector('.calcell.is-today .calcellsq'))`, session),
+  );
+  check(
+    '记账模式的当天详情显示当天与本月尾款预支出',
+    await cdp.evaluate(
+      `document.querySelector('#dayList').textContent.includes('约稿尾款预支出')
+        && document.querySelector('#dayList').textContent.includes('本月尾款预支出')`,
       session,
     ),
   );
@@ -532,9 +595,12 @@ try {
   await cdp.evaluate('document.querySelector("#commissionBody .orderrow__pay").click()', session);
   await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '付尾款表单' });
   await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
-  await cdp.waitFor(`document.querySelector('#commissionBody .status-tag').textContent === '已结清'`, session, {
-    label: '结清状态',
-  });
+  // 结清的那条会排到列表最后，所以要看「有任意一条已结清」
+  await cdp.waitFor(
+    `[...document.querySelectorAll('#commissionBody .status-tag')].some((node) => node.textContent === '已结清')`,
+    session,
+    { label: '结清状态' },
+  );
   check('付清尾款后状态变「已结清」', true);
 
   await cdp.evaluate('document.querySelector("[data-commission-tab=\'receivable\']").click()', session);
@@ -574,6 +640,63 @@ try {
     ),
   );
 
+  // 第二笔待收：填了到账日 → 自动建待办，并出现在排单日历上
+  await cdp.evaluate('document.querySelector("#btnCommissionNew").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '第二笔待收表单' });
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="client"]', '甲方小红'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="title"]', '立绘'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="amount"]', '2500'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="dueDate"]', todayIso), session);
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await new Promise((done) => setTimeout(done, 500));
+  check(
+    '填了到账日的待收会自动生成一条待办',
+    await cdp.evaluate(
+      `new Promise((resolve) => {
+        const request = indexedDB.open('diary-db');
+        request.onsuccess = () => {
+          const all = request.result.transaction('todos', 'readonly').objectStore('todos').getAll();
+          all.onsuccess = () =>
+            resolve(
+              all.result.some(
+                (todo) => todo.receivableId && todo.dueDate === ${JSON.stringify(todayIso)} && !todo.done && todo.text.includes('2,500'),
+              ),
+            );
+          all.onerror = () => resolve(false);
+        };
+        request.onerror = () => resolve(false);
+      })`,
+      session,
+    ),
+  );
+
+  // 排单日历：浅红到账笔数 + 下方预收入
+  await cdp.evaluate('document.querySelector("[data-tab=\'calendar\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnCalToday").click()', session);
+  await setCalendarMode('排单', session);
+  check(
+    '排单格子里出现浅红色的到账笔数',
+    await cdp.evaluate(
+      `(() => {
+        const node = document.querySelector('.calcell.is-today .caldot--income');
+        return Boolean(node) && node.textContent === '1';
+      })()`,
+      session,
+    ),
+  );
+  check(
+    '排单模式的当天详情显示预计收到金额',
+    await cdp.evaluate(
+      `document.querySelector('#dayList').textContent.includes('预计收到')
+        && document.querySelector('#dayList').textContent.includes('2,500')`,
+      session,
+    ),
+  );
+  await setCalendarMode('日记', session);
+  await cdp.evaluate('document.querySelector("[data-tab=\'money\']").click()', session);
+  await cdp.evaluate('document.querySelector("#moneyCommission .commission-row").click()', session);
+  await cdp.waitFor('document.querySelector("#commissionPage").hidden === false', session, { label: '回到约稿专区' });
+
   await cdp.evaluate('document.querySelector("[data-commission-tab=\'pressure\']").click()', session);
   await cdp.waitFor('Boolean(document.querySelector("#commissionBody [data-field=\'salary\']"))', session, {
     label: '资金压力表单',
@@ -581,26 +704,159 @@ try {
   await cdp.evaluate(typeInto('#commissionBody [data-field="salary"]', '8000'), session);
   await cdp.evaluate(typeInto('#commissionBody [data-field="otherExpense"]', '3000'), session);
   check(
-    '资金压力：本月预计结余跟着输入变（8000 − 3000 = 5000）',
-    await cdp.evaluate(`document.querySelector('.pressure-result__value').textContent.includes('5,000')`, session),
+    '资金压力：本月预计结余跟着输入变（收入 − 固定支出 − 尾款）',
+    await cdp.evaluate(
+      `(() => {
+        const hint = document.querySelector('.pressure-result__hint').textContent;
+        const numbers = (hint.match(/[\\d,]+/g) || []).map((item) => Number(item.replace(/,/g, '')));
+        const value = Number(document.querySelector('.pressure-result__value').textContent.replace(/[^\\d.-]/g, ''));
+        if (numbers.length !== 3) return false;
+        return Math.round((numbers[0] - numbers[1] - numbers[2]) * 100) / 100 === value && value > 0;
+      })()`,
+      session,
+    ),
   );
   await cdp.evaluate('document.querySelector("#btnCommissionBack").click()', session);
   await cdp.waitFor('document.querySelector("#commissionPage").hidden === true', session, { label: '退出约稿专区' });
 
-  // 待办：新增 → 勾选 → 归档
+  // 待办：默认今天 → 二次点击设时间 → 勾选完成 → 归档 + 统计
   await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);
+  await cdp.waitFor('document.querySelectorAll("#todoList .todo").length >= 1', session, { label: '待办卡片' });
+  const todoBefore = await cdp.evaluate('document.querySelectorAll("#todoList .todo").length', session);
+  check(
+    '待收款项自动生成的待办出现在卡片上',
+    await cdp.evaluate(`document.querySelector('#todoList').textContent.includes('收款：甲方小红')`, session),
+  );
+  check(
+    '待办卡片上没有「清除已完成」按钮',
+    await cdp.evaluate(`!document.querySelector('#btnClearDoneTodos')`, session),
+  );
+
   await cdp.evaluate(typeInto('#todoInput', '买牛奶'), session);
   await cdp.evaluate('document.querySelector("#btnTodoAdd").click()', session);
-  await cdp.waitFor('document.querySelectorAll("#todoList .todo").length === 1', session, { label: '新增待办' });
-  check('时间线页可以快速加待办', true);
-  await cdp.evaluate('document.querySelector("#todoList .todo__check").click()', session);
-  await cdp.waitFor('document.querySelectorAll("#todoList .todo").length === 0', session, { label: '完成后移出卡片' });
-  check('勾选完成后从待办卡片移出', true);
+  await cdp.waitFor(`document.querySelectorAll("#todoList .todo").length === ${todoBefore + 1}`, session, {
+    label: '新增待办',
+  });
+  check(
+    '快速新增的待办默认就是今天',
+    await cdp.evaluate(
+      `[...document.querySelectorAll('#todoList .todo')].some((row) => row.textContent.includes('买牛奶') && row.textContent.includes('今天'))`,
+      session,
+    ),
+  );
+
+  // 二次点击进编辑：加具体时间
+  await cdp.evaluate(
+    `[...document.querySelectorAll('#todoList .todo')].find((row) => row.textContent.includes('买牛奶')).querySelector('.todo__body').click()`,
+    session,
+  );
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '待办编辑弹窗' });
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="dueTime"]', '14:30'), session);
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await cdp.waitFor(`document.querySelector('#todoList').textContent.includes('14:30')`, session, { label: '时间写回' });
+  check('待办能设具体时间并显示在行上', true);
+
+  await cdp.evaluate(
+    `[...document.querySelectorAll('#todoList .todo')].find((row) => row.textContent.includes('买牛奶')).querySelector('.todo__check').click()`,
+    session,
+  );
+  await cdp.waitFor(`document.querySelectorAll("#todoList .todo").length === ${todoBefore}`, session, {
+    label: '完成后移出卡片',
+  });
+  check('勾选完成后从卡片移出（历史保留在日历与二级页）', true);
+
+  // 日历待办模式：格子显示 未完成/总数，当天详情仍保留已完成的
+  await cdp.evaluate('document.querySelector("[data-tab=\'calendar\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnCalToday").click()', session);
+  await setCalendarMode('待办', session);
+  check(
+    '日历格子显示「未完成/总数」',
+    await cdp.evaluate(
+      `(() => {
+        const node = document.querySelector('.calcell.is-today .caldot');
+        return Boolean(node) && /^\\d+\\/\\d+$/.test(node.textContent);
+      })()`,
+      session,
+    ),
+  );
+  check(
+    '当天详情仍保留已完成的待办，并给出条数',
+    await cdp.evaluate(
+      `document.querySelector('#dayList').textContent.includes('买牛奶')
+        && Boolean(document.querySelector('#dayList .todo.is-done'))
+        && document.querySelector('#dayList').textContent.includes('条已完成')`,
+      session,
+    ),
+  );
+
+  // 详情区顶部的小加号：四种模式各开对应的新建入口
+  await cdp.evaluate('document.querySelector("#dayList .daynew").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '小加号开待办表单' });
+  check(
+    '待办模式下小加号带出选中日期',
+    await cdp.evaluate(`document.querySelector('#formDialogBody [data-field="dueDate"]').value === '${todayIso}'`, session),
+  );
+  await cdp.evaluate('document.querySelector("#formDialog button[value=\'cancel\']").click()', session);
+  await new Promise((done) => setTimeout(done, 220));
+
+  await setCalendarMode('日记', session);
+  await cdp.evaluate('document.querySelector("#dayList .daynew").click()', session);
+  await cdp.waitFor('document.querySelector("#editor").hidden === false', session, { label: '日记模式小加号' });
+  check(
+    '日记模式下小加号新建这天的日记',
+    await cdp.evaluate(`document.querySelector('#fDate').value === '${todayIso}'`, session),
+  );
+  await cdp.evaluate('document.querySelector("#btnBack").click()', session);
+  await cdp.waitFor('document.querySelector("#editor").hidden === true', session, { label: '关掉新建的日记' });
+
+  await setCalendarMode('记账', session);
+  await cdp.evaluate('document.querySelector("#dayList .daynew").click()', session);
+  await cdp.waitFor('document.querySelector("#keypad").hidden === false', session, { label: '记账模式小加号' });
+  check('记账模式下小加号打开金额键盘', true);
+  await cdp.evaluate('document.querySelector("#btnKeypadClose").click()', session);
+  await new Promise((done) => setTimeout(done, 320));
+
+  await setCalendarMode('排单', session);
+  await cdp.evaluate('document.querySelector("#dayList .daynew").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '排单模式小加号' });
+  check(
+    '排单模式下小加号新建截止这天的约稿',
+    await cdp.evaluate(`document.querySelector('#formDialogBody [data-field="deadline"]').value === '${todayIso}'`, session),
+  );
+  await cdp.evaluate('document.querySelector("#formDialog button[value=\'cancel\']").click()', session);
+  await new Promise((done) => setTimeout(done, 220));
+  await setCalendarMode('日记', session);
+
+  // 待办二级页：完成统计 + 按天归档
+  await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);
   await cdp.evaluate('document.querySelector("#btnTodoMore").click()', session);
   await cdp.waitFor('document.querySelector("#todoPage").hidden === false', session, { label: '待办二级页' });
   check(
-    '待办二级页把已完成的归档在下面',
-    await cdp.evaluate('document.querySelectorAll("#todoPageBody .todo.is-done").length === 1', session),
+    '二级页顶部有「完成统计」卡',
+    await cdp.evaluate(`document.querySelector('#todoPageBody .panel').textContent.includes('完成统计')`, session),
+  );
+  check(
+    '统计默认「近 7 天」，能统计到分组完成次数',
+    await cdp.evaluate(
+      `(() => {
+        const active = document.querySelector('#todoPageBody .todo-seg .segmented__item.is-active');
+        const row = document.querySelector('#todoPageBody .lstats__row');
+        return active.textContent === '近 7 天' && row.textContent.includes('默认清单') && row.textContent.includes('完成 1 次');
+      })()`,
+      session,
+    ),
+  );
+  check(
+    '已完成按天分组显示',
+    await cdp.evaluate(
+      `Boolean(document.querySelector('#todoPageBody .doneday'))
+        && document.querySelector('#todoPageBody .doneday').textContent.includes('完成了 1 条')`,
+      session,
+    ),
+  );
+  check(
+    '二级页也没有「清除已完成」按钮',
+    await cdp.evaluate(`!document.querySelector('#btnTodoPageClear')`, session),
   );
   await cdp.evaluate('document.querySelector("#btnTodoBack").click()', session);
   await cdp.waitFor('document.querySelector("#todoPage").hidden === true', session, { label: '退出待办页' });

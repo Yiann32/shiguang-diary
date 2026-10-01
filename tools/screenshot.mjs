@@ -103,9 +103,13 @@ const SEED = `(async () => {
   await store.addLedger({ type: 'expense', amount: 18, categoryId: pick(expense, '餐饮'), accountId: account.id, note: '早饭', date: dayKey(2), time: '07:50' });
   await store.addLedger({ type: 'income', amount: 1200, categoryId: pick(income, '兼职'), accountId: card.id, note: '稿费', date: dayKey(4), time: '15:00' });
   await store.setBudget('month-total', 3000);
-  await store.addTodo({ text: '交房租', dueDate: dayKey(-3), priority: 2, note: '记得带票据' });
-  await store.addTodo({ text: '买牛奶', priority: 0 });
-  await store.addTodo({ text: '把阳台的花修一遍', priority: 1, done: true, doneAt: Date.now() });
+  const workGroup = await store.addTodoGroup('工作');
+  const lifeGroup = await store.addTodoGroup('生活');
+  await store.addTodo({ text: '交房租', dueDate: dayKey(-3), priority: 2, note: '记得带票据', groupId: lifeGroup.id });
+  await store.addTodo({ text: '把阳台的花修一遍', dueDate: dayKey(0), priority: 1, groupId: lifeGroup.id });
+  await store.addTodo({ text: '写周报', dueDate: dayKey(0), groupId: workGroup.id, done: true, doneAt: Date.now() - 3 * 3600e3 });
+  await store.addTodo({ text: '回邮件', dueDate: dayKey(1), groupId: workGroup.id, done: true, doneAt: Date.now() - 26 * 3600e3 });
+  await store.addTodo({ text: '买牛奶', groupId: lifeGroup.id, done: true, doneAt: Date.now() - 50 * 3600e3 });
 
   // 约稿：待付尾款 / 待收款项
   const thisMonth = dayKey(0).slice(0, 7);
@@ -223,6 +227,15 @@ try {
   await settle(400);
   save('mobile-pressure.png', await cdp.screenshot(session));
   await cdp.evaluate('document.querySelector("#btnCommissionBack").click()', session);
+  await settle(320);
+
+  // 手机端：待办二级页（完成统计 + 按天归档）
+  await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnTodoMore").click()', session);
+  await cdp.waitFor('document.querySelector("#todoPage").hidden === false', session, { label: '待办二级页' });
+  await settle(400);
+  save('mobile-todo.png', await cdp.screenshot(session));
+  await cdp.evaluate('document.querySelector("#btnTodoBack").click()', session);
   await settle(320);
 
   // 手机端：编辑界面（参考图那套：✕ 退出 / 保存 / 大号日期 / 标签 · 字数）
