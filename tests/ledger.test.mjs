@@ -289,8 +289,8 @@ test('待办：日历格子只统计当月未完成的数量', () => {
 test('仓库层：记一笔 / 改一笔 / 删一笔，默认账本自带分类与账户', async () => {
   const store = await memoryStore();
   assert.equal(store.books().length, 1);
-  assert.equal(store.categories('expense').length, 12);
-  assert.equal(store.categories('income').length, 8);
+  assert.equal(store.categories('expense').length, 13);
+  assert.equal(store.categories('income').length, 9);
   assert.equal(store.accounts().length, 1);
 
   const account = store.accounts()[0];
@@ -340,7 +340,7 @@ test('仓库层：多账本互相隔离，日记与待办不受影响', async ()
   const second = await store.addBook('工作');
   assert.equal(store.activeBook().id, second.id);
   assert.equal(store.ledgerList().length, 0, '新账本是空的');
-  assert.equal(store.categories('expense').length, 12, '新账本有自己的分类');
+  assert.equal(store.categories('expense').length, 13, '新账本有自己的分类');
   assert.equal(store.list().length, 1, '日记不分账本');
   assert.equal(store.todoList().length, 1, '待办不分账本');
 
@@ -386,7 +386,7 @@ test('仓库层：周期记账补生成是幂等的，跨天只补一次', async
 test('仓库层：分类 / 账户 / 预算的增删改', async () => {
   const store = await memoryStore();
   const custom = await store.addCategory({ kind: 'expense', name: '咖啡', icon: '☕', color: '#c2705a' });
-  assert.equal(store.categories('expense').length, 13);
+  assert.equal(store.categories('expense').length, 14);
   await store.updateCategory(custom.id, { name: '咖啡奶茶' });
   assert.equal(store.categoryById(custom.id).name, '咖啡奶茶');
 
@@ -445,7 +445,7 @@ test('仓库层：清空全部会连记账和待办一起清掉，并重建默�
   assert.equal(store.ledgerList().length, 0);
   assert.equal(store.todoList().length, 0);
   assert.equal(store.books().length, 1);
-  assert.equal(store.categories('expense').length, 12);
+  assert.equal(store.categories('expense').length, 13);
 });
 
 test('降级存储（同接口的兜底适配器）也能存记账与待办', async () => {
@@ -485,7 +485,7 @@ test('迁移兼容：老版本的日记与待办读进来不丢，旧版记账�
     assert.equal(store.todoList()[0].priority, 0, '新字段自动补默认值');
     assert.equal(store.ledgerList().length, 0, '旧版记账数据不再读取');
     assert.equal(store.books().length, 1, '自动建一个默认账本');
-    assert.equal(store.categories('expense').length, 12);
+    assert.equal(store.categories('expense').length, 13);
   } finally {
     delete globalThis.localStorage;
   }
@@ -565,4 +565,336 @@ test('待办排序的真实顺序：手动排序优先于创建时间', async ()
   assert.deepEqual(store.todoList().map((item) => item.text), ['第一', '第二', '第三']);
   await store.reorderTodos([c.id, a.id, b.id]);
   assert.deepEqual(store.todoList().map((item) => item.text), ['第三', '第一', '第二']);
+});
+
+/* ------------------------------------------------------------ 待收款项 */
+
+test('待收款项：规整、状态与剩余金额', () => {
+  const item = model.normalizeReceivable({
+    client: '  某甲方  ',
+    title: '  封面插画  ',
+    amount: '1500.555',
+    received: 500,
+    dueDate: '2026-10-20',
+  });
+  assert.equal(item.client, '某甲方');
+  assert.equal(item.title, '封面插画');
+  assert.equal(item.amount, 1500.56);
+  assert.equal(item.received, 500);
+  assert.equal(item.dueDate, '2026-10-20');
+  assert.equal(model.receivableRemaining(item), 1000.56);
+  assert.equal(model.receivableStatus(item), 'partial');
+  assert.equal(model.receivableStatusLabel(item), '部分收到');
+
+  const open = model.normalizeReceivable({ amount: 300, dueDate: '不是日期' });
+  assert.equal(open.dueDate, '', '非法日期当成「时间未定」');
+  assert.equal(model.receivableStatus(open), 'open');
+  assert.equal(model.receivableStatusLabel(open), '未收到');
+
+  const settled = model.normalizeReceivable({ amount: 200, received: 999 });
+  assert.equal(settled.received, 200, '已收不会超过应收');
+  assert.equal(model.receivableStatus(settled), 'settled');
+  assert.equal(model.receivableRemaining(settled), 0);
+  assert.ok(settled.settledAt);
+});
+
+test('待收款项：未结清排前面，按约定到账日，时间未定排最后', () => {
+  const list = [
+    model.normalizeReceivable({ id: 'a', client: 'A', amount: 100, dueDate: '2026-11-05' }),
+    model.normalizeReceivable({ id: 'b', client: 'B', amount: 100, received: 100 }),
+    model.normalizeReceivable({ id: 'c', client: 'C', amount: 100 }),
+    model.normalizeReceivable({ id: 'd', client: 'D', amount: 100, dueDate: '2026-10-05' }),
+  ];
+  assert.deepEqual(
+    model.sortReceivables(list).map((item) => item.id),
+    ['d', 'a', 'c', 'b'],
+  );
+});
+
+test('待收款项：本月预计收到 / 时间未定 / 逾期分开算', () => {
+  const list = [
+    model.normalizeReceivable({ amount: 800, dueDate: '2026-10-20' }), // 本月
+    model.normalizeReceivable({ amount: 500, received: 200, dueDate: '2026-10-08' }), // 本月，还差 300
+    model.normalizeReceivable({ amount: 400, dueDate: '2026-09-20' }), // 逾期
+    model.normalizeReceivable({ amount: 1200 }), // 时间未定
+    model.normalizeReceivable({ amount: 600, dueDate: '2026-12-01' }), // 以后
+    model.normalizeReceivable({ amount: 999, received: 999 }), // 已结清，不计入
+  ];
+  const totals = model.receivableTotals(list, { today: '2026-10-01', year: 2026, month: 9 });
+  assert.equal(totals.monthPending, 1100);
+  assert.equal(totals.undated, 1200);
+  assert.equal(totals.overdue, 400);
+  assert.equal(totals.overdueCount, 1);
+  assert.equal(totals.later, 600);
+  assert.equal(totals.openTotal, 3300);
+  assert.equal(totals.openCount, 5);
+  assert.equal(totals.settled, 999);
+});
+
+test('待收款项：按甲方聚合未结与已结', () => {
+  const list = [
+    model.normalizeReceivable({ client: '甲', amount: 1000, received: 400, dueDate: '2026-09-01' }),
+    model.normalizeReceivable({ client: '甲', amount: 500 }),
+    model.normalizeReceivable({ client: '乙', amount: 800, received: 800 }),
+  ];
+  const rows = model.clientStats(list, '2026-10-01');
+  assert.equal(rows[0].client, '甲');
+  assert.equal(rows[0].pending, 1100);
+  assert.equal(rows[0].settled, 400);
+  assert.equal(rows[0].overdue, 600);
+  assert.equal(rows[0].count, 2);
+  assert.equal(rows[1].client, '乙');
+  assert.equal(rows[1].pending, 0);
+  assert.equal(rows[1].settled, 800);
+});
+
+test('待收款项：未来 6 个月的预计到账，时间未定单独算', () => {
+  const list = [
+    model.normalizeReceivable({ amount: 300, dueDate: '2026-10-10' }),
+    model.normalizeReceivable({ amount: 200, dueDate: '2026-10-30' }),
+    model.normalizeReceivable({ amount: 700, dueDate: '2026-11-02' }),
+    model.normalizeReceivable({ amount: 900 }),
+  ];
+  const result = model.monthlyExpected(list, { months: 6, today: '2026-10-01' });
+  assert.equal(result.months.length, 6);
+  assert.deepEqual(result.months.slice(0, 2).map((item) => item.amount), [500, 700]);
+  assert.equal(result.undated, 900);
+});
+
+test('仓库层：待收款项增改删 + 确认收款生成收入流水', async () => {
+  const store = await memoryStore();
+  const account = store.accounts()[0];
+  const item = await store.addReceivable({
+    client: '甲方 A',
+    title: '封面',
+    amount: 2000,
+    dueDate: '2026-10-20',
+    accountId: account.id,
+  });
+  assert.equal(await store.addReceivable({ amount: 0 }), null);
+  assert.equal(store.receivableList().length, 1);
+
+  // 收一半：清单里还在，只是变成部分收到
+  const half = await store.settleReceivable(item.id, { amount: 1000, date: '2026-10-10' });
+  assert.equal(half.amount, 1000);
+  assert.equal(half.settled, false);
+  assert.equal(store.receivableList()[0].received, 1000);
+  assert.equal(store.ledgerList().length, 1, '收款会生成一笔收入流水');
+  assert.equal(store.ledgerList()[0].type, 'income');
+  assert.equal(store.ledgerList()[0].amount, 1000);
+  assert.match(store.ledgerList()[0].note, /甲方 A/);
+  assert.equal(store.ledgerMonthTotals(2026, 9).income, 1000);
+
+  // 收尾款：结清，且不会再重复生成
+  const rest = await store.settleReceivable(item.id, {});
+  assert.equal(rest.amount, 1000);
+  assert.equal(rest.settled, true);
+  assert.equal(store.ledgerList().length, 2);
+  assert.equal(await store.settleReceivable(item.id, {}), null);
+  assert.equal(store.ledgerList().length, 2, '结清后不会再生成流水');
+  assert.equal(store.receivableTotals().openTotal, 0);
+
+  const totals = store.clientStats();
+  assert.equal(totals[0].client, '甲方 A');
+  assert.equal(totals[0].settled, 2000);
+
+  await store.updateReceivable(item.id, { client: '甲方 B' });
+  assert.equal(store.receivableList()[0].client, '甲方 B');
+  assert.equal(await store.removeReceivable(item.id), true);
+  assert.equal(store.receivableList().length, 0);
+});
+
+test('备份 v3 里带上待收款项', () => {
+  const payload = model.buildExportPayload([{ id: 'e1', date: '2026-09-01', content: '日记' }], {
+    receivables: [{ id: 'r1', client: '甲方', amount: 500 }],
+  });
+  assert.equal(payload.receivables.length, 1);
+  const parsed = model.parseImport(JSON.stringify(payload));
+  assert.equal(parsed.receivables.length, 1);
+});
+
+/* ------------------------------------------------------------ 约稿订单 */
+
+test('约稿订单：规整时区分稿件截止日与尾款约定时间', () => {
+  const item = model.normalizeCommission({
+    title: '  双人半身  ',
+    artist: '  阿蓝  ',
+    total: '2000.555',
+    paid: 800,
+    deadline: '2026-10-20',
+    dueMonth: '2026-11',
+    note: '  记得要 PSD  ',
+  });
+  assert.equal(item.title, '双人半身');
+  assert.equal(item.artist, '阿蓝');
+  assert.equal(item.total, 2000.56);
+  assert.equal(item.paid, 800);
+  assert.equal(item.deadline, '2026-10-20');
+  assert.equal(item.dueMonth, '2026-11');
+  assert.equal(item.dueDate, '');
+  assert.equal(item.note, '记得要 PSD');
+  assert.equal(model.commissionRemaining(item), 1200.56);
+
+  const messy = model.normalizeCommission({ title: 'X', total: 500, paid: 900, deadline: '不是日期', dueMonth: '2026-13' });
+  assert.equal(messy.paid, 500, '已付不会超过总价');
+  assert.equal(messy.deadline, '');
+  assert.equal(messy.dueMonth, '');
+});
+
+test('约稿订单：付款状态与进度状态', () => {
+  const unpaid = model.normalizeCommission({ title: 'A', total: 1000 });
+  assert.equal(model.commissionPayState(unpaid), 'unpaid');
+  assert.equal(model.commissionPayLabel(unpaid), '待付款');
+  assert.equal(model.commissionProgressLabel(unpaid), '绘制中');
+  assert.equal(model.commissionStatusLabel(unpaid), '待付款 · 绘制中');
+  assert.equal(model.isCommissionClosed(unpaid), false);
+
+  const tail = model.normalizeCommission({ title: 'A', total: 1000, paid: 300 });
+  assert.equal(model.commissionPayLabel(tail), '待付尾款');
+
+  const doneButUnpaid = model.normalizeCommission({ title: 'A', total: 1000, paid: 300, done: true });
+  assert.equal(model.commissionStatusLabel(doneButUnpaid), '待付尾款 · 已完稿');
+  assert.equal(model.isCommissionClosed(doneButUnpaid), false);
+
+  const closed = model.normalizeCommission({ title: 'A', total: 1000, paid: 1000, done: true });
+  assert.equal(model.commissionPayLabel(closed), '已结清');
+  assert.equal(model.commissionStatusLabel(closed), '已完结');
+  assert.equal(model.isCommissionClosed(closed), true);
+  assert.equal(model.commissionRemaining(closed), 0);
+});
+
+test('约稿订单：尾款时间取日期优先，并按月分组', () => {
+  const list = [
+    model.normalizeCommission({ id: 'a', title: 'A', total: 800, done: true, deadline: '2026-10-05', dueDate: '2026-09-20' }), // 付款逾期
+    model.normalizeCommission({ id: 'b', title: 'B', total: 500, paid: 200, dueDate: '2026-10-20' }), // 本月
+    model.normalizeCommission({ id: 'c', title: 'C', total: 600, dueMonth: '2026-12' }), // 以后
+    model.normalizeCommission({ id: 'd', title: 'D', total: 1200 }), // 时间未定
+    model.normalizeCommission({ id: 'e', title: 'E', total: 300, paid: 300 }), // 已结清
+  ];
+  const groups = model.commissionGroups(list, { today: '2026-10-01', year: 2026, month: 9 });
+  assert.deepEqual(groups.overdue.map((item) => item.id), ['a']);
+  assert.deepEqual(groups.current.map((item) => item.id), ['b']);
+  assert.deepEqual(groups.undated.map((item) => item.id), ['d']);
+  assert.deepEqual(groups.settled.map((item) => item.id), ['e']);
+  assert.equal(groups.upcoming.length, 1);
+  assert.equal(groups.upcoming[0].month, '2026-12');
+  assert.equal(groups.upcoming[0].remaining, 600);
+  assert.equal(groups.overdueTotal, 800);
+  assert.equal(groups.currentTotal, 300);
+  assert.equal(groups.undatedTotal, 1200);
+  assert.equal(groups.openTotal, 2900);
+  assert.equal(groups.openCount, 4);
+
+  assert.equal(model.commissionPayKey(list[1]), '2026-10-20');
+  assert.equal(model.commissionPayMonth(list[2]), '2026-12');
+  assert.equal(model.commissionPayKey(list[3]), '');
+});
+
+test('约稿订单：日历按稿件截止日索引，只收未完结的', () => {
+  const list = [
+    model.normalizeCommission({ id: 'a', title: 'A', total: 100, deadline: '2026-10-08' }),
+    model.normalizeCommission({ id: 'b', title: 'B', total: 100, deadline: '2026-10-08', paid: 100, done: true }), // 已完结
+    model.normalizeCommission({ id: 'c', title: 'C', total: 100, deadline: '2026-10-20', done: true }),
+    model.normalizeCommission({ id: 'd', title: 'D', total: 100 }), // 没截止日
+    model.normalizeCommission({ id: 'e', title: 'E', total: 100, deadline: '2026-11-02' }),
+  ];
+  const map = model.commissionDueMap(list, 2026, 9, '2026-10-01');
+  assert.deepEqual(map.get('2026-10-08'), { count: 1, overdue: 0 });
+  assert.deepEqual(map.get('2026-10-20'), { count: 1, overdue: 0 });
+  assert.equal(map.has('2026-11-02'), false, '只看当月');
+  assert.equal(map.size, 2);
+
+  // 过了截止日还没画完 = 逾期
+  const late = model.commissionDueMap(list, 2026, 9, '2026-10-25');
+  assert.deepEqual(late.get('2026-10-08'), { count: 1, overdue: 1 });
+  assert.deepEqual(late.get('2026-10-20'), { count: 1, overdue: 0 }, '已完稿不算逾期');
+
+  assert.deepEqual(model.commissionDueOn(list, '2026-10-08').map((item) => item.id), ['a']);
+  assert.equal(model.isCommissionOverdue(list[0], '2026-10-25'), true);
+});
+
+test('资金压力：预计收入 − 固定支出 − 本月尾款', () => {
+  const balanced = model.pressureSummary({ salary: 8000, otherIncome: 2000, receivable: 1500, fixed: 3000, tail: 2500 });
+  assert.equal(balanced.income, 11500);
+  assert.equal(balanced.balance, 6000);
+  assert.equal(balanced.over, false);
+
+  const tight = model.pressureSummary({ salary: 5000, fixed: 4000, tail: 3000 });
+  assert.equal(tight.balance, -2000);
+  assert.equal(tight.over, true);
+
+  assert.equal(model.pressureSummary({}).balance, 0);
+});
+
+test('仓库层：约稿订单增改删 + 付款生成支出流水', async () => {
+  const store = await memoryStore();
+  const order = await store.addCommission({
+    title: '双人半身',
+    artist: '阿蓝',
+    total: 2000,
+    deadline: '2026-10-20',
+    dueMonth: '2026-10',
+  });
+  assert.ok(order.id);
+  assert.equal(await store.addCommission({ artist: '没写稿件名' }), null, '稿件名必填');
+  assert.equal(store.commissionList().length, 1);
+  assert.equal(store.commissionGroups(2026, 9).currentTotal, 2000);
+
+  // 付 800：生成一笔支出，尾款变 1200，进入「待付尾款」
+  const first = await store.settleCommission(order.id, { amount: 800, date: '2026-10-05' });
+  assert.equal(first.amount, 800);
+  assert.equal(first.settled, false);
+  assert.equal(store.ledgerList().length, 1);
+  assert.equal(store.ledgerList()[0].type, 'expense');
+  assert.equal(store.ledgerList()[0].payableId, order.id);
+  assert.equal(store.commissionById(order.id).paid, 800);
+  assert.equal(model.commissionPayLabel(store.commissionById(order.id)), '待付尾款');
+
+  // 付清：结清后再付返回 null，不重复生成流水
+  const rest = await store.settleCommission(order.id, {});
+  assert.equal(rest.settled, true);
+  assert.equal(store.ledgerList().length, 2);
+  assert.equal(await store.settleCommission(order.id, {}), null);
+  assert.equal(store.ledgerList().length, 2);
+  assert.equal(store.commissionGroups(2026, 9).openTotal, 0);
+
+  // 完稿 + 结清 = 已完结
+  await store.toggleCommissionDone(order.id);
+  assert.equal(model.isCommissionClosed(store.commissionById(order.id)), true);
+  await store.updateCommission(order.id, { artist: '阿蓝蓝' });
+  assert.equal(store.commissionById(order.id).artist, '阿蓝蓝');
+  assert.equal(await store.removeCommission(order.id), true);
+  assert.equal(store.commissionList().length, 0);
+});
+
+test('仓库层：本月待付尾款与资金压力', async () => {
+  const store = await memoryStore();
+  const today = model.todayKey();
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7)) - 1;
+  const monthPrefix = model.monthKey(year, month);
+  await store.addCommission({ title: '本月', total: 1000, dueDate: today, deadline: today });
+  await store.addCommission({ title: '逾期', total: 500, dueDate: '2020-01-01' });
+  await store.addCommission({ title: '下个月', total: 700, dueMonth: `${year + 1}-01` });
+  await store.addCommission({ title: '没定时间', total: 300 });
+  const dueThisMonth = store.commissionDueThisMonth(year, month);
+  assert.equal(dueThisMonth, 1500, '本月 + 逾期都算这个月要掏的钱');
+
+  const pressure = store.pressure(year, month);
+  assert.equal(pressure.tail, dueThisMonth);
+  assert.equal(pressure.balance, model.toMoney(pressure.income - pressure.fixed - pressure.tail));
+
+  const dueMap = store.commissionDueMap(year, month);
+  assert.equal(dueMap.size, 1, '只有填了稿件截止日的那条进日历');
+  assert.equal(dueMap.get(today).count, 1);
+  assert.equal(store.commissionsDueOn(today).length, 1);
+  assert.equal(store.commissionsDueOn(today)[0].title, '本月');
+  assert.equal(monthPrefix.length, 7);
+});
+
+test('备份 v3 里带上约稿订单', () => {
+  const payload = model.buildExportPayload([], { payables: [{ id: 'p1', title: '双人半身', total: 2000 }] });
+  assert.equal(payload.payables.length, 1);
+  const parsed = model.parseImport(JSON.stringify(payload));
+  assert.equal(parsed.payables.length, 1);
 });

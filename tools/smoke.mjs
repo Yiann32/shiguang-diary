@@ -236,6 +236,8 @@ try {
   await cdp.send('Emulation.clearDeviceMetricsOverride', {}, session);
   await cdp.send('Page.reload', {}, session);
   await cdp.waitFor(BOOTED, session, { label: '回到手机视口' });
+  // 别等界面刚起来就点卡片：等列表真的渲染出来
+  await cdp.waitFor('document.querySelectorAll(".card").length >= 1', session, { label: '列表卡片渲染' });
   await cdp.evaluate('document.querySelectorAll(".card")[0].click()', session);
   await cdp.waitFor('document.querySelector("#editor").hidden === false', session, { label: '打开这篇日记' });
   check('Service Worker 已接管页面（离线可用）', await cdp.evaluate('Boolean(navigator.serviceWorker && navigator.serviceWorker.controller)', session));
@@ -398,11 +400,89 @@ try {
     await cdp.evaluate(`document.querySelector('#moneyOverview').textContent.includes('12.5')`, session),
   );
 
-  // 日历三态：日记 / 记账 / 待办
+  // 约稿专区：新增订单 + 付一笔
+  const todayIso = await cdp.evaluate(
+    `(() => {
+      const date = new Date();
+      const pad = (value) => String(value).padStart(2, '0');
+      return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+    })()`,
+    session,
+  );
+  check(
+    '记账页有约稿卡片（待付尾款 / 预计收到 / 预计结余）',
+    await cdp.evaluate('document.querySelectorAll("#moneyCommission .commission-row").length === 3', session),
+  );
+  await cdp.evaluate('document.querySelector("#moneyCommission .commission-row").click()', session);
+  await cdp.waitFor('document.querySelector("#commissionPage").hidden === false', session, { label: '约稿专区' });
+  check('能进约稿专区', await cdp.evaluate('document.querySelector("#commissionBody").textContent.length > 0', session));
+  await cdp.evaluate('document.querySelector("#btnCommissionNew").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '新增约稿表单' });
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="title"]', '双人半身'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="artist"]', '阿蓝'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="total"]', '2000'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="deadline"]', todayIso), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="dueDate"]', todayIso), session);
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await cdp.waitFor('document.querySelectorAll("#commissionBody .orderrow").length >= 1', session, { label: '约稿列表' });
+  check(
+    '新增约稿后出现在支出列表（待付款）',
+    await cdp.evaluate(`document.querySelector('#commissionBody .status-tag').textContent === '待付款'`, session),
+  );
+  await cdp.evaluate('document.querySelector("#commissionBody .orderrow__pay").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '付款表单' });
+  check(
+    '点「付款」弹出的是付款表单',
+    await cdp.evaluate(`document.querySelector('#formDialogTitle').textContent.startsWith('付款')`, session),
+    await cdp.evaluate(`document.querySelector('#formDialogTitle').textContent`, session),
+  );
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="amount"]', '800'), session);
+  check(
+    '付款金额填进去了',
+    await cdp.evaluate(`document.querySelector('#formDialogBody [data-field="amount"]').value === '800'`, session),
+    await cdp.evaluate(`document.querySelector('#formDialogBody [data-field="amount"]').value`, session),
+  );
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await new Promise((done) => setTimeout(done, 900));
+  check(
+    '尾款状态变成待付尾款',
+    await cdp.evaluate(`document.querySelector('#commissionBody .status-tag').textContent === '待付尾款'`, session),
+    await cdp.evaluate(`document.querySelector('#commissionBody').textContent.slice(0, 140)`, session),
+  );
+  check(
+    '付 800 后变「待付尾款」且还剩 1200',
+    await cdp.evaluate(`document.querySelector('#commissionBody .orderrow').textContent.includes('1,200')`, session),
+  );
+  check(
+    '付款同时生成了支出流水',
+    await cdp.evaluate(
+      `new Promise((resolve) => {
+        const request = indexedDB.open('diary-db');
+        request.onsuccess = () => {
+          const all = request.result.transaction('ledger', 'readonly').objectStore('ledger').getAll();
+          all.onsuccess = () => resolve(all.result.some((item) => item.type === 'expense' && item.amount === 800 && item.payableId));
+          all.onerror = () => resolve(false);
+        };
+        request.onerror = () => resolve(false);
+      })`,
+      session,
+    ),
+  );
+
+  // 日历四态：右上角一颗按钮循环切，每切一次弹绿色状态气泡
   await cdp.evaluate('document.querySelector("[data-tab=\'calendar\']").click()', session);
   // 上一步左滑测试把日历留在了下个月，先回到今天
   await cdp.evaluate('document.querySelector("#btnCalToday").click()', session);
-  await cdp.evaluate('document.querySelector("[data-cal-mode=\'money\']").click()', session);
+  check('日历默认停在日记模式', await cdp.evaluate('document.querySelector("#calModeText").textContent === "日记"', session));
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "记账"', session, { label: '切到记账模式' });
+  check(
+    '切一次弹出绿色状态气泡（内容和状态一致）',
+    await cdp.evaluate(
+      `document.querySelector('#toast').dataset.tone === 'success' && document.querySelector('#toast').textContent === '记账'`,
+      session,
+    ),
+  );
   await cdp.waitFor('document.querySelectorAll(".calmoney").length > 0', session, { label: '日历记账模式' });
   check(
     '日历切到记账模式后，今天的格子里显示当天支出',
@@ -414,15 +494,98 @@ try {
       session,
     ),
   );
-  await cdp.evaluate('document.querySelector("[data-cal-mode=\'todo\']").click()', session);
-  await cdp.waitFor('document.querySelector("[data-cal-mode=\'todo\']").classList.contains("is-active")', session, {
-    label: '日历待办模式',
-  });
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "待办"', session, { label: '切到待办模式' });
   check(
     '日历待办模式换成了待办视图',
     await cdp.evaluate(`document.querySelector('#dayList').textContent.includes('待办')`, session),
   );
-  await cdp.evaluate('document.querySelector("[data-cal-mode=\'diary\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "排单"', session, { label: '切到排单模式' });
+  check(
+    '排单模式下今天的格子显示要交的稿件数量',
+    await cdp.evaluate(
+      `(() => {
+        const cell = document.querySelector('.calcell.is-today .caldot');
+        return Boolean(cell) && cell.textContent === '1';
+      })()`,
+      session,
+    ),
+  );
+  check(
+    '排单模式下当天详情列出要交的稿',
+    await cdp.evaluate(`document.querySelector('#dayList').textContent.includes('双人半身')`, session),
+  );
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "日记"', session, { label: '转回日记模式' });
+  check('连点四次刚好回到日记模式', true);
+  await cdp.evaluate('document.querySelector("#btnCalDate").click()', session);
+  check(
+    '点左上角日期会走「选择年月」流程',
+    await cdp.evaluate(`Boolean(document.querySelector('input[type="month"]'))`, session),
+  );
+
+  // 约稿专区：付清尾款 → 待收款项 → 资金压力
+  await cdp.evaluate('document.querySelector("[data-tab=\'money\']").click()', session);
+  await cdp.evaluate('document.querySelector("#moneyCommission .commission-row").click()', session);
+  await cdp.waitFor('document.querySelector("#commissionPage").hidden === false', session, { label: '回到约稿专区' });
+  await cdp.evaluate('document.querySelector("#commissionBody .orderrow__pay").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '付尾款表单' });
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await cdp.waitFor(`document.querySelector('#commissionBody .status-tag').textContent === '已结清'`, session, {
+    label: '结清状态',
+  });
+  check('付清尾款后状态变「已结清」', true);
+
+  await cdp.evaluate('document.querySelector("[data-commission-tab=\'receivable\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnCommissionNew").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '新增待收表单' });
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="client"]', '甲方小明'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="title"]', '头像定制'), session);
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="amount"]', '3000'), session);
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await cdp.waitFor('document.querySelectorAll("#commissionBody .orderrow").length >= 1', session, { label: '待收列表' });
+  check(
+    '待收款项能新增，没填日期就落在「时间未定」',
+    await cdp.evaluate(
+      `[...document.querySelectorAll('#commissionBody .ordergroup__name')].some((node) => node.textContent.includes('时间未定'))`,
+      session,
+    ),
+  );
+  await cdp.evaluate('document.querySelector("#commissionBody .orderrow__pay").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '收款表单' });
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await cdp.waitFor(`document.querySelector('#commissionBody .status-tag').textContent === '已结清'`, session, {
+    label: '收齐状态',
+  });
+  check(
+    '收款后生成收入流水',
+    await cdp.evaluate(
+      `new Promise((resolve) => {
+        const request = indexedDB.open('diary-db');
+        request.onsuccess = () => {
+          const all = request.result.transaction('ledger', 'readonly').objectStore('ledger').getAll();
+          all.onsuccess = () => resolve(all.result.some((item) => item.type === 'income' && item.amount === 3000));
+          all.onerror = () => resolve(false);
+        };
+        request.onerror = () => resolve(false);
+      })`,
+      session,
+    ),
+  );
+
+  await cdp.evaluate('document.querySelector("[data-commission-tab=\'pressure\']").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#commissionBody [data-field=\'salary\']"))', session, {
+    label: '资金压力表单',
+  });
+  await cdp.evaluate(typeInto('#commissionBody [data-field="salary"]', '8000'), session);
+  await cdp.evaluate(typeInto('#commissionBody [data-field="otherExpense"]', '3000'), session);
+  check(
+    '资金压力：本月预计结余跟着输入变（8000 − 3000 = 5000）',
+    await cdp.evaluate(`document.querySelector('.pressure-result__value').textContent.includes('5,000')`, session),
+  );
+  await cdp.evaluate('document.querySelector("#btnCommissionBack").click()', session);
+  await cdp.waitFor('document.querySelector("#commissionPage").hidden === true', session, { label: '退出约稿专区' });
 
   // 待办：新增 → 勾选 → 归档
   await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);

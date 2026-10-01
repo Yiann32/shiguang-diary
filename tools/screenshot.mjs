@@ -106,6 +106,14 @@ const SEED = `(async () => {
   await store.addTodo({ text: '交房租', dueDate: dayKey(-3), priority: 2, note: '记得带票据' });
   await store.addTodo({ text: '买牛奶', priority: 0 });
   await store.addTodo({ text: '把阳台的花修一遍', priority: 1, done: true, doneAt: Date.now() });
+
+  // 约稿：待付尾款 / 待收款项
+  const thisMonth = dayKey(0).slice(0, 7);
+  await store.addCommission({ title: '双人半身', artist: '阿蓝', total: 2000, paid: 800, deadline: dayKey(-3), dueMonth: thisMonth });
+  await store.addCommission({ title: '场景插画', artist: '小满', total: 3500, deadline: dayKey(-10), dueDate: dayKey(15) });
+  await store.addCommission({ title: '头像定制', artist: '格子', total: 600, paid: 600, done: true, deadline: dayKey(-6), dueDate: dayKey(6) });
+  await store.addReceivable({ client: '甲方 A', title: '封面加急', amount: 1500, dueDate: dayKey(-5) });
+  await store.addReceivable({ client: '杂志社', title: '连载稿费', amount: 4000 });
   return ids.length + Date.parse(String(stamp));
 })()`;
 
@@ -190,10 +198,32 @@ try {
 
   // 手机端：日历的记账模式（格子里显示当天支出）
   await cdp.evaluate('document.querySelector("[data-tab=\'calendar\']").click()', session);
-  await cdp.evaluate('document.querySelector("[data-cal-mode=\'money\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "记账"', session, { label: '记账模式' });
   await settle(400);
   save('mobile-calendar-money.png', await cdp.screenshot(session));
-  await cdp.evaluate('document.querySelector("[data-cal-mode=\'diary\']").click()', session);
+
+  // 手机端：日历的排单模式（当天要交的稿）
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "待办"', session, { label: '待办模式' });
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "排单"', session, { label: '排单模式' });
+  await settle(400);
+  save('mobile-schedule.png', await cdp.screenshot(session));
+  await cdp.evaluate('document.querySelector("#btnCalMode").click()', session);
+  await cdp.waitFor('document.querySelector("#calModeText").textContent === "日记"', session, { label: '回到日记模式' });
+
+  // 手机端：约稿专区（支出 / 资金压力）
+  await cdp.evaluate('document.querySelector("[data-tab=\'money\']").click()', session);
+  await cdp.evaluate('document.querySelector("#moneyCommission .commission-row").click()', session);
+  await cdp.waitFor('document.querySelector("#commissionPage").hidden === false', session, { label: '约稿专区' });
+  await settle(400);
+  save('mobile-commission.png', await cdp.screenshot(session));
+  await cdp.evaluate('document.querySelector("[data-commission-tab=\'pressure\']").click()', session);
+  await settle(400);
+  save('mobile-pressure.png', await cdp.screenshot(session));
+  await cdp.evaluate('document.querySelector("#btnCommissionBack").click()', session);
+  await settle(320);
 
   // 手机端：编辑界面（参考图那套：✕ 退出 / 保存 / 大号日期 / 标签 · 字数）
   await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);

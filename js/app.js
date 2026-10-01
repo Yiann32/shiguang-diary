@@ -37,6 +37,9 @@
       moneyYear: 0,
       moneyMonth: 0,
       ledgerRange: 'month',
+      commissionTab: 'payable',
+      commissionQuery: '',
+      hideClosed: false,
       subpage: null,
       pendingImport: null,
       installPrompt: null,
@@ -96,7 +99,19 @@
       btnTodoPageClear: $('#btnTodoPageClear'),
       btnTodoBack: $('#btnTodoBack'),
       btnTodoGroups: $('#btnTodoGroups'),
-      calModeGroup: $('#calModeGroup'),
+      btnCalDate: $('#btnCalDate'),
+      btnCalMode: $('#btnCalMode'),
+      calModeIcon: $('#calModeIcon'),
+      calModeText: $('#calModeText'),
+      moneyCommission: $('#moneyCommission'),
+      commissionPage: $('#commissionPage'),
+      commissionBody: $('#commissionBody'),
+      commissionTabs: $('#commissionTabs'),
+      commissionSearch: $('#commissionSearch'),
+      commissionSearchBar: $('#commissionSearchBar'),
+      btnCommissionBack: $('#btnCommissionBack'),
+      btnCommissionNew: $('#btnCommissionNew'),
+      btnCommissionHideClosed: $('#btnCommissionHideClosed'),
       bookLabel: $('#bookLabel'),
       btnBookSwitch: $('#btnBookSwitch'),
       btnMoneyStats: $('#btnMoneyStats'),
@@ -189,8 +204,8 @@
         btnPrevMonth: ['chevronLeft', 17],
         btnNextMonth: ['chevronRight', 17],
         btnCalToday: ['calendar', 20],
-        btnCalPick: ['shuffle', 20],
         btnTodoBack: ['back', 22],
+        btnCommissionBack: ['back', 22],
         btnStatsBack: ['back', 22],
         btnLedgerStatsBack: ['back', 22],
         btnSetupBack: ['back', 22],
@@ -250,6 +265,7 @@
         if (state.subpage === 'stats') renderStats();
         if (state.subpage === 'ledgerStats') renderLedgerStats();
         if (state.subpage === 'ledgerSetup') renderLedgerSetup();
+        if (state.subpage === 'commission') renderCommissionList();
         if (state.tab === 'calendar') renderCalendar();
       });
 
@@ -576,6 +592,41 @@
       );
     }
 
+    /* -------------------------------------------- 日历的四种查看模式 */
+
+    const CAL_MODES = [
+      { key: 'diary', label: '日记', icon: 'book' },
+      { key: 'money', label: '记账', icon: 'wallet' },
+      { key: 'todo', label: '待办', icon: 'check' },
+      { key: 'commission', label: '排单', icon: 'brush' },
+    ];
+
+    function currentCalMode() {
+      return CAL_MODES.find((item) => item.key === state.calendarMode) || CAL_MODES[0];
+    }
+
+    /** 右上角那颗按钮显示当前状态 */
+    function renderCalendarModeButton() {
+      const mode = currentCalMode();
+      if (dom.calModeText) dom.calModeText.textContent = mode.label;
+      if (dom.calModeIcon) {
+        dom.calModeIcon.textContent = '';
+        dom.calModeIcon.append(icon(mode.icon, 16));
+      }
+      if (dom.btnCalMode) dom.btnCalMode.setAttribute('aria-label', `当前是${mode.label}，点一下切换`);
+    }
+
+    /** 点一下切一档：日记 → 记账 → 待办 → 排单 → 日记…，并弹个绿色小气泡报状态 */
+    function cycleCalendarMode() {
+      const index = CAL_MODES.findIndex((item) => item.key === state.calendarMode);
+      const next = CAL_MODES[(index + 1) % CAL_MODES.length];
+      state.calendarMode = next.key;
+      settings = Diary.settings.saveSettings({ calendarMode: next.key });
+      renderCalendarModeButton();
+      renderCalendar();
+      toast(next.label, { tone: 'success', duration: 1200 });
+    }
+
     function renderCalendar(slideDirection) {
       if (!state.calYear) {
         const now = model.parseDateKey(today()) || new Date();
@@ -583,9 +634,7 @@
         state.calSelected = state.calSelected || today();
       }
       const mode = state.calendarMode;
-      for (const button of $$('[data-cal-mode]', dom.calModeGroup)) {
-        button.classList.toggle('is-active', button.dataset.calMode === mode);
-      }
+      renderCalendarModeButton();
       const counts = model.countByDate(state.entries);
       const header = model.headerDate(state.calSelected);
       dom.calDateMain.textContent = header.main;
@@ -599,6 +648,8 @@
 
       const moneyMap = mode === 'money' ? store.dayLedgerMap(state.calYear, state.calMonth) : null;
       const todoMap = mode === 'todo' ? model.todoDueMap(store.todoList(), state.calYear, state.calMonth) : null;
+      const commissionMap =
+        mode === 'commission' ? store.commissionDueMap(state.calYear, state.calMonth) : null;
 
       dom.calGrid.textContent = '';
       for (const week of model.monthGrid(state.calYear, state.calMonth)) {
@@ -626,7 +677,7 @@
               day && day.income > 0 ? el('span', { class: 'calcellsig' }) : null,
             ];
             title = day ? `${cell.date} · 支出 ${model.formatMoney(day.expense)} · 收入 ${model.formatMoney(day.income)}` : cell.date;
-          } else {
+          } else if (mode === 'todo') {
             classes.push('calcell--stacked');
             const pending = todoMap.get(cell.date) || 0;
             children = [
@@ -639,6 +690,20 @@
                 : el('span', { class: 'calmoney is-empty', text: '0' }),
             ];
             title = pending ? `${cell.date} · ${pending} 条待办` : cell.date;
+          } else {
+            classes.push('calcell--stacked');
+            const cell2 = commissionMap.get(cell.date);
+            const count = cell2 ? cell2.count : 0;
+            children = [
+              el('span', { class: 'calcell__num', text: label }),
+              count
+                ? el('span', {
+                    class: `caldot${cell2.overdue ? ' caldot--overdue' : ' caldot--schedule'}`,
+                    text: String(count),
+                  })
+                : el('span', { class: 'calmoney is-empty', text: '0' }),
+            ];
+            title = count ? `${cell.date} · ${count} 份稿要交` : cell.date;
           }
           if (cell.date === today()) classes.push('is-today');
           if (cell.date === state.calSelected) classes.push('is-selected');
@@ -678,6 +743,10 @@
       }
       if (state.calendarMode === 'todo') {
         renderDayTodos(date);
+        return;
+      }
+      if (state.calendarMode === 'commission') {
+        renderDayCommissions(date);
         return;
       }
       const items = model.sortEntries(
@@ -957,7 +1026,7 @@
       if (field.type === 'note') return el('p', { class: 'hint', text: field.text });
 
       if (field.type === 'segmented') {
-        const group = el('div', { class: 'segmented' });
+        const group = el('div', { class: 'segmented', dataset: { field: field.key } });
         let current = field.value;
         for (const option of field.options || []) {
           group.append(
@@ -1004,7 +1073,7 @@
       }
 
       if (field.type === 'select') {
-        const select = el('select', { class: 'input' });
+        const select = el('select', { class: 'input', dataset: { field: field.key } });
         for (const option of field.options || []) {
           select.append(
             el('option', {
@@ -1022,6 +1091,7 @@
       const input = el('input', {
         type: field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text',
         class: 'input',
+        dataset: { field: field.key },
         value: field.value === undefined || field.value === null ? '' : String(field.value),
         placeholder: field.placeholder || '',
         maxlength: field.maxLength,
@@ -1213,6 +1283,34 @@
           el('span', { text: `${pending.length} 条未完成` }),
         ]),
         el('div', { class: 'mflow' }, [list]),
+      );
+    }
+
+    /** 排单模式：这天要交的稿 */
+    function renderDayCommissions(date) {
+      const items = store.commissionsDueOn(date);
+      if (!items.length) {
+        dom.dayList.append(
+          el('div', { class: 'daylist__empty' }, [
+            el('p', { class: 'daylist__hint', text: '这天没有要交的稿' }),
+            el('button', {
+              type: 'button',
+              class: 'btn btn--soft',
+              text: '新增约稿（截止这天）',
+              onclick: () => openCommissionDialog({ deadline: date }),
+            }),
+          ]),
+        );
+        return;
+      }
+      const list = el('div', { class: 'mflow' });
+      for (const item of items) list.append(commissionRow(item, { hideDeadline: true }));
+      dom.dayList.append(
+        el('div', { class: 'moneyflow__day' }, [
+          el('span', { text: model.dateLabel(date, today()) }),
+          el('span', { text: `${items.length} 份稿要交` }),
+        ]),
+        list,
       );
     }
 
@@ -1532,6 +1630,7 @@
       const { year, month } = moneyPeriod();
       const book = store.activeBook();
       dom.bookLabel.textContent = book ? book.name : '日常账本';
+      renderMoneyCommission();
 
       const totals = store.ledgerMonthTotals(year, month);
       const budget = store.budgetProgress(year, month);
@@ -1597,6 +1696,624 @@
         for (const item of group.items) list.append(flowRow(item));
         dom.moneyFlow.append(list);
       }
+    }
+
+    /* ------------------------------------------------------------ 约稿 */
+
+    /** 约稿订单行（专区与日历排单共用） */
+    function commissionRow(item, options) {
+      const config = options || {};
+      const remaining = model.commissionRemaining(item);
+      const settled = model.isCommissionSettled(item);
+      const overdue = model.isCommissionOverdue(item, today());
+      const pay = model.commissionPayKey(item);
+      const sub = [
+        item.artist || '未填画师',
+        item.deadline && !config.hideDeadline ? `交稿 ${model.dateLabel(item.deadline, today())}` : '',
+        pay ? `尾款 ${model.dateLabel(pay, today())}` : '尾款时间未定',
+        item.deadline ? '' : '未排期',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const tone = settled ? 'done' : overdue ? 'overdue' : model.commissionPayState(item);
+      const row = el('button', { type: 'button', class: 'orderrow', onclick: () => openCommissionDialog(item) }, [
+        el('span', { class: 'orderrow__main' }, [
+          el('span', { class: 'orderrow__title', text: item.title }),
+          el('span', { class: 'orderrow__sub', text: sub }),
+        ]),
+        el('span', {
+          class: `status-tag status-tag--${tone}`,
+          text: settled ? '已结清' : overdue ? '逾期' : model.commissionPayLabel(item),
+        }),
+        el('span', {
+          class: `orderrow__amount${settled ? ' orderrow__amount--settled' : ' orderrow__amount--open'}`,
+          text: `¥${model.formatMoney(settled ? item.total : remaining)}`,
+        }),
+      ]);
+      if (!settled) {
+        row.append(
+          el('span', {
+            class: 'orderrow__pay',
+            text: '付款',
+            onclick: (event) => {
+              event.stopPropagation();
+              openCommissionPayDialog(item);
+            },
+          }),
+        );
+      }
+      return row;
+    }
+
+    /** 待收款项行 */
+    function receivableRow(item) {
+      const remaining = model.receivableRemaining(item);
+      const settled = remaining <= 0 && Number(item.amount) > 0;
+      const overdue = !settled && item.dueDate && item.dueDate < today();
+      const status = model.receivableStatus(item);
+      const tone = settled ? 'done' : overdue ? 'overdue' : status === 'partial' ? 'tail' : 'unpaid';
+      const row = el('button', { type: 'button', class: 'orderrow', onclick: () => openReceivableDialog(item) }, [
+        el('span', { class: 'orderrow__main' }, [
+          el('span', { class: 'orderrow__title', text: item.title || item.client || '待收' }),
+          el('span', {
+            class: 'orderrow__sub',
+            text: [
+              item.client || '未填甲方',
+              item.dueDate ? `约定 ${model.dateLabel(item.dueDate, today())}` : '到账时间未定',
+              item.note,
+            ]
+              .filter(Boolean)
+              .join(' · '),
+          }),
+        ]),
+        el('span', {
+          class: `status-tag status-tag--${tone}`,
+          text: settled ? '已结清' : overdue ? '逾期' : model.receivableStatusLabel(item),
+        }),
+        el('span', {
+          class: `orderrow__amount${settled ? ' orderrow__amount--settled' : ' orderrow__amount--open'}`,
+          text: `¥${model.formatMoney(settled ? item.amount : remaining)}`,
+        }),
+      ]);
+      if (!settled) {
+        row.append(
+          el('span', {
+            class: 'orderrow__pay',
+            text: '收款',
+            onclick: (event) => {
+              event.stopPropagation();
+              openReceiveDialog(item);
+            },
+          }),
+        );
+      }
+      return row;
+    }
+
+    function orderGroupNode(title, items, total, buildRow, options) {
+      const config = options || {};
+      const wrap = el('section', { class: 'panel' });
+      wrap.append(
+        el('div', { class: `ordergroup${config.tone === 'overdue' ? ' ordergroup--overdue' : ''}` }, [
+          el('span', { class: 'ordergroup__name', text: title }),
+          el('span', { class: 'ordergroup__total', text: `${items.length} 笔 · ¥${model.formatMoney(total)}` }),
+        ]),
+      );
+      const list = el('div', { class: 'mflow' });
+      for (const item of items) list.append(buildRow(item));
+      wrap.append(list);
+      return wrap;
+    }
+
+    function sumRemaining(items, remainingOf) {
+      return model.toMoney(items.reduce((total, item) => total + remainingOf(item), 0));
+    }
+
+    /** 记账首页那张「约稿」卡 */
+    function renderMoneyCommission() {
+      if (!dom.moneyCommission) return;
+      const { year, month } = moneyPeriod();
+      const tail = store.commissionDueThisMonth(year, month);
+      const totals = store.receivableTotals(year, month);
+      const expected = model.toMoney(totals.monthPending + totals.overdue);
+      const pressure = store.pressure(year, month);
+      const entry = (label, value, tone, tab) =>
+        el('button', { type: 'button', class: 'commission-row', onclick: () => openCommissionPage(tab) }, [
+          el('span', { class: 'commission-row__label', text: label }),
+          el('span', { class: `commission-row__value commission-row__value--${tone}`, text: value }),
+          el('span', { class: 'card-panel__chevron' }),
+        ]);
+      dom.moneyCommission.textContent = '';
+      dom.moneyCommission.append(
+        el('h3', { class: 'section__title', text: '约稿' }),
+        entry('本月待付尾款', `¥${model.formatMoney(tail)}`, 'out', 'payable'),
+        entry('这个月预计收到', `¥${model.formatMoney(expected)}`, 'in', 'receivable'),
+        entry('本月预计结余', `¥${model.formatMoney(pressure.balance)}`, pressure.balance < 0 ? 'out' : 'in', 'pressure'),
+      );
+    }
+
+    function openCommissionPage(tab) {
+      if (tab) state.commissionTab = tab;
+      openSubpage('commission');
+    }
+
+    function renderCommission() {
+      if (!dom.commissionBody) return;
+      for (const button of $$('[data-commission-tab]', dom.commissionTabs)) {
+        button.classList.toggle('is-active', button.dataset.commissionTab === state.commissionTab);
+      }
+      dom.commissionSearchBar.hidden = state.commissionTab === 'pressure';
+      dom.btnCommissionHideClosed.hidden = state.commissionTab !== 'payable';
+      dom.btnCommissionNew.textContent = state.commissionTab === 'receivable' ? '+ 新增待收' : '+ 新增';
+      if (dom.commissionSearch.value !== state.commissionQuery) dom.commissionSearch.value = state.commissionQuery;
+      renderCommissionList();
+    }
+
+    function renderCommissionList() {
+      const body = dom.commissionBody;
+      if (!body) return;
+      body.textContent = '';
+      if (state.commissionTab === 'receivable') renderCommissionReceivable(body);
+      else if (state.commissionTab === 'pressure') renderCommissionPressure(body);
+      else renderCommissionPayable(body);
+    }
+
+    function matchesCommissionQuery(text) {
+      const query = state.commissionQuery.trim().toLowerCase();
+      if (!query) return true;
+      return String(text || '').toLowerCase().includes(query);
+    }
+
+    function renderCommissionPayable(body) {
+      const { year, month } = moneyPeriod();
+      const list = store.commissionList().filter((item) => matchesCommissionQuery(`${item.title} ${item.artist} ${item.note}`));
+      const groups = model.commissionGroups(list, { today: today(), year, month });
+
+      const summary = el('section', { class: 'panel' });
+      summary.append(
+        el('div', { class: 'money-sum' }, [
+          moneySumItem('本月待付', groups.currentTotal, 'out'),
+          moneySumItem('逾期未付', groups.overdueTotal, 'out'),
+          moneySumItem('未完结合计', groups.openTotal, 'out'),
+        ]),
+      );
+      summary.append(
+        el('p', {
+          class: 'hint hint--sub',
+          text: `时间未定 ¥${model.formatMoney(groups.undatedTotal)} · 已结清 ${groups.settled.length} 笔`,
+        }),
+      );
+      body.append(summary);
+
+      if (groups.overdue.length) {
+        body.append(orderGroupNode('逾期', groups.overdue, groups.overdueTotal, commissionRow, { tone: 'overdue' }));
+      }
+      body.append(orderGroupNode('本月要付', groups.current, groups.currentTotal, commissionRow));
+      for (const group of groups.upcoming) {
+        body.append(orderGroupNode(group.label, group.items, group.remaining, commissionRow));
+      }
+      if (groups.undated.length) {
+        body.append(orderGroupNode('时间未定', groups.undated, groups.undatedTotal, commissionRow));
+      }
+      if (!state.hideClosed) {
+        body.append(
+          orderGroupNode(
+            '已结清',
+            groups.settled,
+            sumRemaining(groups.settled, (item) => Number(item.total) || 0),
+            commissionRow,
+          ),
+        );
+      }
+      if (!list.length) {
+        body.append(el('p', { class: 'hint', text: '还没有约稿订单，点右上角「+ 新增」记一笔。' }));
+      }
+    }
+
+    function renderCommissionReceivable(body) {
+      const { year, month } = moneyPeriod();
+      const list = store
+        .receivableList()
+        .filter((item) => matchesCommissionQuery(`${item.client} ${item.title} ${item.note}`));
+      const totals = model.receivableTotals(list, { today: today(), year, month });
+      const prefix = model.monthKey(year, month);
+      const buckets = { overdue: [], current: [], later: [], undated: [], settled: [] };
+      for (const item of list) {
+        const remaining = model.receivableRemaining(item);
+        if (remaining <= 0) buckets.settled.push(item);
+        else if (!item.dueDate) buckets.undated.push(item);
+        else if (item.dueDate < today()) buckets.overdue.push(item);
+        else if (item.dueDate.startsWith(prefix)) buckets.current.push(item);
+        else buckets.later.push(item);
+      }
+
+      const summary = el('section', { class: 'panel' });
+      summary.append(
+        el('div', { class: 'money-sum' }, [
+          moneySumItem('本月预计收到', totals.monthPending, 'in'),
+          moneySumItem('逾期未收', totals.overdue, 'in'),
+          moneySumItem('未结合计', totals.openTotal, 'in'),
+        ]),
+        el('p', { class: 'hint hint--sub', text: `时间未定 ¥${model.formatMoney(totals.undated)}（不知道什么时候能到账的那部分）` }),
+      );
+      body.append(summary);
+
+      const remainingOf = (item) => model.receivableRemaining(item);
+      if (buckets.overdue.length) {
+        body.append(
+          orderGroupNode('逾期未收', buckets.overdue, sumRemaining(buckets.overdue, remainingOf), receivableRow, {
+            tone: 'overdue',
+          }),
+        );
+      }
+      if (buckets.current.length) {
+        body.append(orderGroupNode('本月预计收到', buckets.current, sumRemaining(buckets.current, remainingOf), receivableRow));
+      }
+      if (buckets.later.length) {
+        body.append(orderGroupNode('以后再收', buckets.later, sumRemaining(buckets.later, remainingOf), receivableRow));
+      }
+      if (buckets.undated.length) {
+        body.append(orderGroupNode('时间未定', buckets.undated, sumRemaining(buckets.undated, remainingOf), receivableRow));
+      }
+      if (buckets.settled.length) {
+        body.append(
+          orderGroupNode(
+            '已结清',
+            buckets.settled,
+            sumRemaining(buckets.settled, (item) => Number(item.amount) || 0),
+            receivableRow,
+          ),
+        );
+      }
+
+      const clients = model.clientStats(list, today());
+      if (clients.length) {
+        const block = el('section', { class: 'panel' });
+        block.append(el('h3', { class: 'section__title', text: '按甲方看' }));
+        for (const row of clients) {
+          block.append(
+            el('div', { class: 'listrow' }, [
+              el('span', { class: 'listrow__icon', text: '🧑‍🎨' }),
+              el('span', { class: 'listrow__main' }, [
+                el('span', { class: 'listrow__title', text: row.client }),
+                el('span', {
+                  class: 'listrow__sub',
+                  text: `${row.count} 笔 · 已收 ¥${model.formatMoney(row.settled)}${row.overdue ? ` · 逾期 ¥${model.formatMoney(row.overdue)}` : ''}`,
+                }),
+              ]),
+              el('span', {
+                class: `listrow__value${row.pending > 0 ? ' listrow__value--out' : ' listrow__value--in'}`,
+                text: row.pending > 0 ? `欠 ¥${model.formatMoney(row.pending)}` : '已结清',
+              }),
+            ]),
+          );
+        }
+        body.append(block);
+      }
+      if (!list.length) {
+        body.append(el('p', { class: 'hint', text: '还没有待收款项，点右上角「+ 新增待收」。' }));
+      }
+    }
+
+    function renderCommissionPressure(body) {
+      const { year, month } = moneyPeriod();
+      const plan = settings.pressure || {};
+      const totals = store.receivableTotals(year, month);
+      const autoTail = store.commissionDueThisMonth(year, month);
+      const autoReceive = model.toMoney(totals.monthPending + totals.overdue);
+
+      const panel = el('section', { class: 'panel' });
+      panel.append(el('h3', { class: 'section__title', text: '本月资金压力' }));
+      const inputs = {};
+      const field = (key, label, value, hint) => {
+        const input = el('input', {
+          type: 'number',
+          class: 'input',
+          dataset: { field: key },
+          inputmode: 'decimal',
+          step: '0.01',
+          value: String(value || ''),
+          placeholder: '0',
+        });
+        input.addEventListener('input', () => recalc());
+        inputs[key] = input;
+        return el('label', { class: 'fieldrow fieldrow--stack' }, [
+          el('span', { class: 'fieldrow__label', text: label }),
+          input,
+          hint ? el('span', { class: 'hint', text: hint }) : null,
+        ]);
+      };
+      panel.append(
+        field('salary', '预计工资', plan.salary),
+        field('otherIncome', '预计其他收入（稿费、副业、理财等）', plan.otherIncome),
+        field('otherExpense', '其他固定支出（房租、卡、保险等）', plan.otherExpense),
+        field('tail', `本月待付尾款（自动带入 ¥${model.formatMoney(autoTail)}，可以改）`, autoTail),
+      );
+      const result = el('div', { class: 'pressure-result' });
+      panel.append(result);
+      panel.append(
+        el('p', {
+          class: 'pressure-rows',
+          text: `这个月预计收到 ¥${model.formatMoney(autoReceive)}（含逾期未收）`,
+        }),
+      );
+
+      function recalc() {
+        const summary = model.pressureSummary({
+          salary: Number(inputs.salary.value) || 0,
+          otherIncome: Number(inputs.otherIncome.value) || 0,
+          fixed: Number(inputs.otherExpense.value) || 0,
+          tail: Number(inputs.tail.value) || 0,
+          receivable: autoReceive,
+        });
+        result.className = `pressure-result${summary.over ? ' is-over' : ''}`;
+        result.textContent = '';
+        result.append(
+          el('span', { class: 'pressure-result__label', text: '本月预计结余' }),
+          el('span', { class: 'pressure-result__value', text: `¥${model.formatMoney(summary.balance)}` }),
+          el('span', {
+            class: 'pressure-result__hint',
+            text: summary.over
+              ? `还差 ¥${model.formatMoney(Math.abs(summary.balance))}，得想办法补上`
+              : `收入 ¥${model.formatMoney(summary.income)} − 固定支出 ¥${model.formatMoney(summary.fixed)} − 尾款 ¥${model.formatMoney(summary.tail)}`,
+          }),
+        );
+        settings = Diary.settings.saveSettings({
+          pressure: {
+            salary: Number(inputs.salary.value) || 0,
+            otherIncome: Number(inputs.otherIncome.value) || 0,
+            otherExpense: Number(inputs.otherExpense.value) || 0,
+          },
+        });
+      }
+      recalc();
+      body.append(panel);
+    }
+
+    /* ---------------------------------------------------- 约稿相关弹窗 */
+
+    async function openCommissionDialog(base) {
+      const item = base && base.id ? base : null;
+      const draft = base || {};
+      const values = await openForm({
+        title: item ? '编辑约稿' : '新增约稿',
+        okText: item ? '保存' : '新增',
+        fields: [
+          {
+            type: 'text',
+            key: 'title',
+            label: '稿件名',
+            value: item ? item.title : draft.title || '',
+            placeholder: '比如：双人半身',
+            maxLength: 40,
+          },
+          {
+            type: 'text',
+            key: 'artist',
+            label: '画师',
+            value: item ? item.artist : draft.artist || '',
+            placeholder: '谁画的',
+            maxLength: 20,
+          },
+          { type: 'number', key: 'total', label: '总价', value: item ? item.total : draft.total || '' },
+          { type: 'note', text: '已付可以在下面直接改；用行上的「付款」按钮付款会自动累加。' },
+          { type: 'number', key: 'paid', label: '已付', value: item ? item.paid : 0 },
+          {
+            type: 'date',
+            key: 'deadline',
+            label: '稿件截止日',
+            value: item ? item.deadline : draft.deadline || '',
+          },
+          {
+            type: 'date',
+            key: 'dueDate',
+            label: '尾款约定日期（可留空）',
+            value: item ? item.dueDate : draft.dueDate || '',
+          },
+          {
+            type: 'text',
+            key: 'dueMonth',
+            label: '尾款约定月份（可留空）',
+            value: item ? item.dueMonth : draft.dueMonth || '',
+            placeholder: '2026-11',
+            maxLength: 7,
+          },
+          {
+            type: 'segmented',
+            key: 'done',
+            label: '稿件进度',
+            value: item ? String(item.done) : 'false',
+            options: [
+              { value: 'false', label: '绘制中' },
+              { value: 'true', label: '已完稿' },
+            ],
+          },
+          {
+            type: 'text',
+            key: 'note',
+            label: '备注',
+            value: item ? item.note : draft.note || '',
+            placeholder: '可留空',
+            maxLength: 60,
+          },
+        ],
+        onDelete: item ? async () => store.removeCommission(item.id) : null,
+      });
+      if (!values) return;
+      if (values.__delete) {
+        toast('已删除约稿', { tone: 'success' });
+        return;
+      }
+      const title = String(values.title || '').trim();
+      if (!title) {
+        toast('稿件名不能为空', { tone: 'error' });
+        return;
+      }
+      const payload = {
+        title,
+        artist: values.artist,
+        total: Number(values.total) || 0,
+        paid: Number(values.paid) || 0,
+        deadline: values.deadline,
+        dueDate: values.dueDate,
+        dueMonth: values.dueMonth,
+        done: values.done === 'true',
+        note: values.note,
+      };
+      if (item) await store.updateCommission(item.id, payload);
+      else await store.addCommission(payload);
+      toast(item ? '已保存' : '已新增约稿', { tone: 'success' });
+    }
+
+    async function openCommissionPayDialog(item) {
+      const remaining = model.commissionRemaining(item);
+      const accounts = store.accounts();
+      const values = await openForm({
+        title: `付款 · ${item.title}`,
+        okText: '确认付款',
+        fields: [
+          {
+            type: 'note',
+            text: `总价 ¥${model.formatMoney(item.total)} · 已付 ¥${model.formatMoney(item.paid)} · 还差 ¥${model.formatMoney(remaining)}`,
+          },
+          { type: 'number', key: 'amount', label: '本次付款', value: remaining },
+          { type: 'date', key: 'date', label: '付款日期', value: today() },
+          {
+            type: 'select',
+            key: 'accountId',
+            label: '账户',
+            value: item.accountId || (accounts[0] || {}).id || '',
+            options: accounts.map((account) => ({ value: account.id, label: account.name })),
+          },
+          { type: 'note', text: '确认后会同时记一笔支出流水，分类默认「约稿」。' },
+        ],
+      });
+      if (!values) return;
+      if (!(Number(values.amount) > 0)) {
+        toast('金额要大于 0', { tone: 'error' });
+        return;
+      }
+      const result = await store.settleCommission(item.id, {
+        amount: Number(values.amount),
+        date: values.date,
+        accountId: values.accountId,
+      });
+      if (!result) {
+        toast('这笔已经结清了', { tone: 'error' });
+        return;
+      }
+      toast(
+        result.settled
+          ? `已付清 ¥${model.formatMoney(result.amount)}`
+          : `已付 ¥${model.formatMoney(result.amount)}，还剩 ¥${model.formatMoney(model.commissionRemaining(result.commission))}`,
+        { tone: 'success', duration: 2200 },
+      );
+    }
+
+    async function openReceivableDialog(base) {
+      const item = base && base.id ? base : null;
+      const draft = base || {};
+      const values = await openForm({
+        title: item ? '编辑待收款项' : '新增待收款项',
+        okText: item ? '保存' : '新增',
+        fields: [
+          {
+            type: 'text',
+            key: 'client',
+            label: '甲方',
+            value: item ? item.client : draft.client || '',
+            placeholder: '谁欠你钱',
+            maxLength: 20,
+          },
+          {
+            type: 'text',
+            key: 'title',
+            label: '稿件 / 项目',
+            value: item ? item.title : draft.title || '',
+            placeholder: '可留空',
+            maxLength: 40,
+          },
+          { type: 'number', key: 'amount', label: '应收金额', value: item ? item.amount : draft.amount || '' },
+          { type: 'number', key: 'received', label: '已收', value: item ? item.received : 0 },
+          {
+            type: 'date',
+            key: 'dueDate',
+            label: '约定到账日（不确定就留空）',
+            value: item ? item.dueDate : draft.dueDate || '',
+          },
+          {
+            type: 'text',
+            key: 'note',
+            label: '备注',
+            value: item ? item.note : draft.note || '',
+            placeholder: '可留空',
+            maxLength: 60,
+          },
+        ],
+        onDelete: item ? async () => store.removeReceivable(item.id) : null,
+      });
+      if (!values) return;
+      if (values.__delete) {
+        toast('已删除待收款项', { tone: 'success' });
+        return;
+      }
+      if (!(Number(values.amount) > 0)) {
+        toast('金额要大于 0', { tone: 'error' });
+        return;
+      }
+      const payload = {
+        client: values.client,
+        title: values.title,
+        amount: Number(values.amount),
+        received: Number(values.received) || 0,
+        dueDate: values.dueDate,
+        note: values.note,
+      };
+      if (item) await store.updateReceivable(item.id, payload);
+      else await store.addReceivable(payload);
+      toast(item ? '已保存' : '已新增待收', { tone: 'success' });
+    }
+
+    async function openReceiveDialog(item) {
+      const remaining = model.receivableRemaining(item);
+      const accounts = store.accounts();
+      const values = await openForm({
+        title: `收款 · ${item.client || item.title || '待收'}`,
+        okText: '确认收款',
+        fields: [
+          {
+            type: 'note',
+            text: `应收 ¥${model.formatMoney(item.amount)} · 已收 ¥${model.formatMoney(item.received)} · 还差 ¥${model.formatMoney(remaining)}`,
+          },
+          { type: 'number', key: 'amount', label: '本次收到', value: remaining },
+          { type: 'date', key: 'date', label: '到账日期', value: today() },
+          {
+            type: 'select',
+            key: 'accountId',
+            label: '到账账户',
+            value: item.accountId || (accounts[0] || {}).id || '',
+            options: accounts.map((account) => ({ value: account.id, label: account.name })),
+          },
+          { type: 'note', text: '确认后会同时记一笔收入流水。' },
+        ],
+      });
+      if (!values) return;
+      if (!(Number(values.amount) > 0)) {
+        toast('金额要大于 0', { tone: 'error' });
+        return;
+      }
+      const result = await store.settleReceivable(item.id, {
+        amount: Number(values.amount),
+        date: values.date,
+        accountId: values.accountId,
+      });
+      if (!result) {
+        toast('这笔已经收齐了', { tone: 'error' });
+        return;
+      }
+      toast(result.settled ? `已收齐 ¥${model.formatMoney(result.amount)}` : `已收 ¥${model.formatMoney(result.amount)}`, {
+        tone: 'success',
+      });
     }
 
     /* -------------------------------------------------------- 记账统计 */
@@ -1710,6 +2427,7 @@
       stats: () => dom.statsPage,
       ledgerStats: () => dom.ledgerStatsPage,
       ledgerSetup: () => dom.ledgerSetupPage,
+      commission: () => dom.commissionPage,
     };
 
     function openSubpage(name) {
@@ -1721,6 +2439,7 @@
       if (name === 'stats') renderStats();
       if (name === 'ledgerStats') renderLedgerStats();
       if (name === 'ledgerSetup') renderLedgerSetup();
+      if (name === 'commission') renderCommission();
       page.classList.remove('is-leaving');
       page.hidden = false;
       if (name === 'todo') setTimeout(() => dom.todoPageInput.focus(), 90);
@@ -2756,17 +3475,40 @@
         await context.config.onDelete();
       });
       dom.formDialog.addEventListener('close', () => {
-        if (formContext) closeForm(null);
+        // 注意：dialog 的 close 事件是异步派发的，可能是上一个表单留下的。
+        // 如果这会儿已经开了新的表单（open 为 true），这个事件就不能算数，
+        // 否则会把新表单直接关掉、并让它的 Promise 变成「取消」。
+        if (formContext && !dom.formDialog.open) closeForm(null);
       });
 
-      // 日历三态
-      dom.calModeGroup.addEventListener('click', (event) => {
-        const button = event.target.closest('[data-cal-mode]');
-        if (!button) return;
-        state.calendarMode = button.dataset.calMode;
-        settings = Diary.settings.saveSettings({ calendarMode: state.calendarMode });
-        renderCalendar();
+      // 日历：右上角按钮循环切四态，左上角日期选年月
+      dom.btnCalMode.addEventListener('click', cycleCalendarMode);
+      dom.btnCalDate.addEventListener('click', pickMonth);
+
+      // 约稿专区
+      dom.btnCommissionBack.addEventListener('click', () => closeSubpage());
+      dom.btnCommissionNew.addEventListener('click', () => {
+        if (state.commissionTab === 'receivable') openReceivableDialog(null);
+        else openCommissionDialog(null);
       });
+      dom.btnCommissionHideClosed.addEventListener('click', () => {
+        state.hideClosed = !state.hideClosed;
+        dom.btnCommissionHideClosed.setAttribute('aria-pressed', String(state.hideClosed));
+        dom.btnCommissionHideClosed.textContent = state.hideClosed ? '显示已完结' : '隐藏已完结';
+        renderCommissionList();
+      });
+      dom.commissionTabs.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-commission-tab]');
+        if (!button) return;
+        state.commissionTab = button.dataset.commissionTab;
+        state.commissionQuery = '';
+        renderCommission();
+      });
+      const commissionSearchDebounced = debounce(() => {
+        state.commissionQuery = dom.commissionSearch.value;
+        renderCommissionList();
+      }, 140);
+      dom.commissionSearch.addEventListener('input', () => commissionSearchDebounced());
 
       dom.btnEditTags.addEventListener('click', () => {
         dom.tagDialogInput.value = dom.fTags.value;
@@ -2868,8 +3610,6 @@
         state.calSelected = today();
         renderCalendar();
       });
-      $('#btnCalPick').addEventListener('click', pickMonth);
-
       dom.themeGroup.addEventListener('click', (event) => {
         const button = event.target.closest('[data-theme-value]');
         if (!button) return;

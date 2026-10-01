@@ -21,6 +21,8 @@
     let accounts = [];
     let budgets = [];
     let recurring = [];
+    let commissions = [];
+    let receivables = [];
     let ledger = [];
     let activeBookId = '';
     let ready = false;
@@ -108,6 +110,12 @@
       accounts = (await readTable('Accounts')).map((item) => model.normalizeAccount(item));
       budgets = (await readTable('Budgets')).map((item) => model.normalizeBudget(item));
       recurring = (await readTable('Recurring')).map((item) => model.normalizeRecurring(item));
+      commissions = model.sortCommissions(
+        (await readTable('Payables')).map((item) => model.normalizeCommission(item)).filter((item) => item.title),
+      );
+      receivables = model.sortReceivables(
+        (await readTable('Receivables')).map((item) => model.normalizeReceivable(item)).filter((item) => item.amount > 0),
+      );
       ledger = model.sortLedger(
         (await readTable('Ledger'))
           .map((item) => model.normalizeLedger(item))
@@ -201,12 +209,16 @@
         ledger = [];
         budgets = [];
         recurring = [];
+        commissions = [];
+        receivables = [];
         await current.clear();
         if (current.clearMedia) await current.clearMedia();
         for (const key of [
           'Todos',
           'TodoGroups',
           'Ledger',
+          'Payables',
+          'Receivables',
           'Budgets',
           'Recurring',
           'Categories',
@@ -305,6 +317,12 @@
         const incomingAccounts = (payload.accounts || []).map((item) => model.normalizeAccount(item));
         const incomingBudgets = (payload.budgets || []).map((item) => model.normalizeBudget(item));
         const incomingRecurring = (payload.recurring || []).map((item) => model.normalizeRecurring(item));
+        const incomingCommissions = (payload.payables || [])
+          .map((item) => model.normalizeCommission(item))
+          .filter((item) => item.title);
+        const incomingReceivables = (payload.receivables || [])
+          .map((item) => model.normalizeReceivable(item))
+          .filter((item) => item.amount > 0);
         const incomingLedger = (payload.ledger || [])
           .map((item) => model.normalizeLedger(item))
           .filter((item) => !model.isEmptyLedger(item));
@@ -324,6 +342,8 @@
           accounts = incomingAccounts;
           budgets = incomingBudgets;
           recurring = incomingRecurring;
+          commissions = incomingCommissions;
+          receivables = incomingReceivables;
           ledger = incomingLedger;
           todos = incomingTodos;
           todoGroups = incomingGroups;
@@ -335,6 +355,8 @@
             'Budgets',
             'Recurring',
             'Ledger',
+            'Payables',
+            'Receivables',
             'Todos',
             'TodoGroups',
           ]) {
@@ -346,12 +368,16 @@
           accounts = merge(accounts, incomingAccounts);
           budgets = merge(budgets, incomingBudgets);
           recurring = merge(recurring, incomingRecurring);
+          commissions = merge(commissions, incomingCommissions);
+          receivables = merge(receivables, incomingReceivables);
           todos = merge(todos, incomingTodos);
           todoGroups = merge(todoGroups, incomingGroups);
           ledger = merge(ledger, incomingLedger);
         }
 
         ledger = model.sortLedger(ledger, 'desc');
+        commissions = model.sortCommissions(commissions);
+        receivables = model.sortReceivables(receivables);
         await store.persistLedgerDomain();
         await writeTable('Todos', todos);
         await writeTable('TodoGroups', todoGroups);
@@ -366,6 +392,8 @@
         await writeTable('Budgets', budgets);
         await writeTable('Recurring', recurring);
         await writeTable('Ledger', ledger);
+        await writeTable('Payables', commissions);
+        await writeTable('Receivables', receivables);
       },
 
       stats() {
@@ -444,6 +472,8 @@
         accounts = accounts.filter((item) => item.bookId !== id);
         budgets = budgets.filter((item) => item.bookId !== id);
         recurring = recurring.filter((item) => item.bookId !== id);
+        commissions = commissions.filter((item) => item.bookId !== id);
+        receivables = receivables.filter((item) => item.bookId !== id);
         ledger = ledger.filter((item) => item.bookId !== id);
         if (activeBookId === id) activeBookId = books[0].id;
         await call('removeBooks', id);
@@ -452,8 +482,12 @@
         for (const item of doomedAccounts) await call('removeAccounts', item.id);
         await call('clearBudgets');
         await call('clearRecurring');
+        await call('clearPayables');
+        await call('clearReceivables');
         await writeTable('Budgets', budgets);
         await writeTable('Recurring', recurring);
+        await writeTable('Payables', commissions);
+        await writeTable('Receivables', receivables);
         await ensureBook();
         emit();
         return true;
@@ -796,6 +830,238 @@
       },
 
       /* ------------------------------------------------------------ 待办 */
+
+      /* -------------------------------------------------------- 约稿订单 */
+
+      /** 约稿清单：未完结的排前面 */
+      commissionList() {
+        return model.sortCommissions(scoped(commissions));
+      },
+
+      commissionById(id) {
+        return commissions.find((item) => item.id === id) || null;
+      },
+
+      /** 「逾期 / 本月 / 以后各月 / 时间未定 / 已结清」分组 + 合计 */
+      commissionGroups(year, month) {
+        return model.commissionGroups(store.commissionList(), {
+          today: model.todayKey(),
+          year,
+          month,
+        });
+      },
+
+      /** 本月待付尾款（资金压力用，含逾期） */
+      commissionDueThisMonth(year, month) {
+        const prefix = model.monthKey(year, month);
+        return model.toMoney(
+          store
+            .commissionList()
+            .filter((item) => !model.isCommissionSettled(item))
+            .filter((item) => {
+              const key = model.commissionPayKey(item);
+              return key && key.slice(0, 7) <= prefix;
+            })
+            .reduce((sum, item) => sum + model.commissionRemaining(item), 0),
+        );
+      },
+
+      /** 日历「排单」：某个月每一天要交的稿件 */
+      commissionDueMap(year, month) {
+        return model.commissionDueMap(store.commissionList(), year, month, model.todayKey());
+      },
+
+      commissionsDueOn(date) {
+        return model.commissionDueOn(store.commissionList(), date);
+      },
+
+      /** 资金压力：预计收入 − 固定支出 − 本月待付尾款 */
+      pressure(year, month) {
+        const plan = (Diary.settings && Diary.settings.loadSettings().pressure) || {};
+        const totals = store.receivableTotals(year, month);
+        return model.pressureSummary({
+          salary: plan.salary,
+          otherIncome: plan.otherIncome,
+          fixed: plan.otherExpense,
+          tail: store.commissionDueThisMonth(year, month),
+          receivable: totals.monthPending + totals.overdue,
+        });
+      },
+
+      async addCommission(raw) {
+        const item = model.normalizeCommission({ ...raw, bookId: activeBookId }, Date.now(), activeBookId);
+        if (!item.title) return null;
+        commissions = model.sortCommissions([...commissions, item]);
+        await writeOne('Payables', item);
+        emit();
+        return item;
+      },
+
+      async updateCommission(id, patch) {
+        const existing = commissions.find((item) => item.id === id);
+        if (!existing) return null;
+        const next = model.normalizeCommission(
+          { ...existing, ...(patch || {}), id: existing.id },
+          Date.now(),
+          existing.bookId,
+        );
+        if (!next.title) return store.removeCommission(id);
+        commissions = model.sortCommissions(commissions.map((item) => (item.id === id ? next : item)));
+        await writeOne('Payables', next);
+        emit();
+        return next;
+      },
+
+      async removeCommission(id) {
+        const existed = commissions.some((item) => item.id === id);
+        commissions = commissions.filter((item) => item.id !== id);
+        await call('removePayables', id);
+        emit();
+        return existed;
+      },
+
+      async toggleCommissionDone(id) {
+        const item = commissions.find((row) => row.id === id);
+        if (!item) return null;
+        return store.updateCommission(id, { done: !item.done });
+      },
+
+      /**
+       * 付一笔款：生成支出流水 + 累加已付。
+       * 付满即结清；已经结清还调用就返回 null。
+       */
+      async settleCommission(id, options) {
+        const config = options || {};
+        const item = commissions.find((row) => row.id === id);
+        if (!item) return null;
+        const remaining = model.commissionRemaining(item);
+        if (!(remaining > 0)) return null;
+        const amount = Math.min(model.toMoney(config.amount === undefined ? remaining : config.amount), remaining);
+        if (!(amount > 0)) return null;
+        const date = model.isValidDateKey(config.date) ? config.date : model.todayKey();
+        const accounts = store.accounts();
+        const accountId = config.accountId || (accounts[0] ? accounts[0].id : '');
+        const payCategory =
+          config.categoryId ||
+          (store.categories('expense').find((row) => row.name === '约稿') || store.categories('expense')[0] || {}).id ||
+          '';
+
+        const entry = await store.addLedger({
+          type: 'expense',
+          amount,
+          date,
+          time: model.toTimeKey(Date.now()),
+          categoryId: payCategory,
+          accountId,
+          note: [item.artist, item.title].filter(Boolean).join(' · ') || '约稿付款',
+          payableId: item.id,
+        });
+        const next = model.normalizeCommission(
+          { ...item, paid: model.toMoney(item.paid + amount) },
+          Date.now(),
+          item.bookId,
+        );
+        commissions = model.sortCommissions(commissions.map((row) => (row.id === id ? next : row)));
+        await writeOne('Payables', next);
+        emit();
+        return { commission: next, entry, amount, settled: model.isCommissionSettled(next) };
+      },
+
+      /** 待收清单：未结清的排前面，按约定到账日 */
+      receivableList() {
+        return model.sortReceivables(scoped(receivables));
+      },
+
+      receivableTotals(year, month) {
+        return model.receivableTotals(store.receivableList(), {
+          today: model.todayKey(),
+          year,
+          month,
+        });
+      },
+
+      receivablesDueOn(date) {
+        return model.receivablesDueOn(scoped(receivables), date);
+      },
+
+      clientStats() {
+        return model.clientStats(store.receivableList(), model.todayKey());
+      },
+
+      monthlyExpected(months) {
+        return model.monthlyExpected(store.receivableList(), { months: months || 6, today: model.todayKey() });
+      },
+
+      async addReceivable(raw) {
+        const item = model.normalizeReceivable({ ...raw, bookId: activeBookId }, Date.now(), activeBookId);
+        if (!(item.amount > 0)) return null;
+        receivables = model.sortReceivables([...receivables, item]);
+        await writeOne('Receivables', item);
+        emit();
+        return item;
+      },
+
+      async updateReceivable(id, patch) {
+        const existing = receivables.find((item) => item.id === id);
+        if (!existing) return null;
+        const next = model.normalizeReceivable(
+          { ...existing, ...(patch || {}), id: existing.id },
+          Date.now(),
+          existing.bookId,
+        );
+        if (!(next.amount > 0)) return store.removeReceivable(id);
+        receivables = model.sortReceivables(receivables.map((item) => (item.id === id ? next : item)));
+        await writeOne('Receivables', next);
+        emit();
+        return next;
+      },
+
+      async removeReceivable(id) {
+        const existed = receivables.some((item) => item.id === id);
+        receivables = receivables.filter((item) => item.id !== id);
+        await call('removeReceivables', id);
+        emit();
+        return existed;
+      },
+
+      /**
+       * 确认收款：把收到的钱记成一笔收入流水，并写回「已收」。
+       * 收满就算结清；只收一部分就留在清单里继续等。
+       */
+      async settleReceivable(id, options) {
+        const config = options || {};
+        const item = receivables.find((entry) => entry.id === id);
+        if (!item) return null;
+        const remaining = model.receivableRemaining(item);
+        if (!(remaining > 0)) return null;
+        const amount = Math.min(model.toMoney(config.amount === undefined ? remaining : config.amount), remaining);
+        if (!(amount > 0)) return null;
+        const date = model.isValidDateKey(config.date) ? config.date : model.todayKey();
+        const accountId = config.accountId || item.accountId || ((store.accounts()[0] || {}).id ?? '');
+        const received = model.toMoney(item.received + amount);
+
+        const entry = await store.addLedger({
+          type: 'income',
+          amount,
+          date,
+          time: model.toTimeKey(Date.now()),
+          categoryId:
+            config.categoryId ||
+            (store.categories('income').find((row) => row.name === '约稿收入') || store.categories('income')[0] || {}).id ||
+            '',
+          accountId,
+          note: [item.client, item.title].filter(Boolean).join(' · ') || '约稿收款',
+        });
+        const next = model.normalizeReceivable(
+          { ...item, received, accountId, settledAt: received >= item.amount ? Date.now() : null },
+          Date.now(),
+          item.bookId,
+        );
+        receivables = model.sortReceivables(receivables.map((row) => (row.id === id ? next : row)));
+        await writeOne('Receivables', next);
+        emit();
+        return { receivable: next, entry, amount, settled: model.isReceivableSettled(next) };
+      },
 
       todoList() {
         return model.sortTodos(todos);

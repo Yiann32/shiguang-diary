@@ -8,7 +8,7 @@
   const Diary = (root.Diary = root.Diary || {});
 
   const DB_NAME = 'diary-db';
-  const DB_VERSION = 5;
+  const DB_VERSION = 6;
   const ENTRY_STORE = 'entries';
   const MEDIA_STORE = 'media';
   const TODO_STORE = 'todos';
@@ -19,6 +19,8 @@
   const ACCOUNT_STORE = 'accounts';
   const BUDGET_STORE = 'budgets';
   const RECURRING_STORE = 'recurring';
+  const PAYABLE_STORE = 'payables';
+  const RECEIVABLE_STORE = 'receivables';
 
   const LS_KEYS = {
     entries: 'diary:entries',
@@ -31,6 +33,8 @@
     accounts: 'diary:accounts',
     budgets: 'diary:budgets',
     recurring: 'diary:recurring',
+    payables: 'diary:payables',
+    receivables: 'diary:receivables',
   };
 
   /** 除条目、图片外，其余都是「一个 id 一条记录」的简单表 */
@@ -43,6 +47,8 @@
     ['accounts', ACCOUNT_STORE],
     ['budgets', BUDGET_STORE],
     ['recurring', RECURRING_STORE],
+    ['payables', PAYABLE_STORE],
+    ['receivables', RECEIVABLE_STORE],
   ];
 
   const capitalize = (value) => value.charAt(0).toUpperCase() + value.slice(1);

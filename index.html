@@ -86,20 +86,18 @@
           <div class="timeline" id="timeline"></div>
         </section>
 
-        <!-- 日历：右上角三态切换（日记 / 记账 / 待办） -->
+        <!-- 日历：右上角四态循环按钮（日记 / 记账 / 待办 / 排单） -->
         <section class="screen" data-screen="calendar" hidden>
           <header class="topbar topbar--cal">
-            <div class="caldate">
+            <button class="caldate" id="btnCalDate" type="button" aria-label="选择年月" title="选择年月">
               <span class="caldate__main" id="calDateMain"></span>
               <span class="caldate__year" id="calDateYear"></span>
-            </div>
+            </button>
             <span class="spacer"></span>
-            <div class="segmented segmented--mini" id="calModeGroup" role="group" aria-label="日历查看模式">
-              <button type="button" class="segmented__item is-active" data-cal-mode="diary">日记</button>
-              <button type="button" class="segmented__item" data-cal-mode="money">记账</button>
-              <button type="button" class="segmented__item" data-cal-mode="todo">待办</button>
-            </div>
-            <button class="iconbtn" id="btnCalPick" type="button" aria-label="选择年月" title="选择年月"></button>
+            <button class="modebtn" id="btnCalMode" type="button" aria-label="切换日历模式" title="切换日历模式">
+              <span class="modebtn__icon" id="calModeIcon" aria-hidden="true"></span>
+              <span class="modebtn__text" id="calModeText">日记</span>
+            </button>
             <button class="iconbtn" id="btnCalToday" type="button" aria-label="回到今天" title="回到今天"></button>
           </header>
 
@@ -128,6 +126,8 @@
           </header>
           <div class="screen__body">
             <section class="panel money-overview" id="moneyOverview"></section>
+            <!-- 约稿：待付尾款 / 预计收到 / 资金压力 -->
+            <section class="panel" id="moneyCommission"></section>
             <section class="panel" id="moneyChart"></section>
             <section class="panel" id="moneyRank"></section>
             <div class="moneyflow" id="moneyFlow"></div>
@@ -238,10 +238,39 @@
           <span class="spacer"></span>
           <button class="btn btn--ghost btn--sm" id="btnBookManage" type="button">账本</button>
         </header>
-        <div class="screen__body" id="ledgerSetupBody"></div>
-      </section>
+            <div class="screen__body" id="ledgerSetupBody"></div>
+          </section>
 
-      <!-- 二级页：待办 -->
+          <!-- 二级页：约稿（支出 / 收入 / 资金压力） -->
+          <section class="subpage" id="commissionPage" hidden aria-labelledby="commissionPageTitle">
+            <header class="topbar">
+              <button class="iconbtn" id="btnCommissionBack" type="button" aria-label="返回" title="返回"></button>
+              <h2 class="topbar__heading" id="commissionPageTitle">约稿</h2>
+              <span class="spacer"></span>
+              <button class="btn btn--ghost btn--sm" id="btnCommissionHideClosed" type="button" aria-pressed="false">隐藏已完结</button>
+              <button class="btn btn--primary btn--sm" id="btnCommissionNew" type="button">+ 新增</button>
+            </header>
+            <div class="subtoolbar">
+              <div class="segmented" id="commissionTabs" role="group" aria-label="约稿视图">
+                <button type="button" class="segmented__item is-active" data-commission-tab="payable">支出</button>
+                <button type="button" class="segmented__item" data-commission-tab="receivable">收入</button>
+                <button type="button" class="segmented__item" data-commission-tab="pressure">资金压力</button>
+              </div>
+              <div class="searchbar searchbar--inline" id="commissionSearchBar">
+                <input
+                  id="commissionSearch"
+                  class="searchbar__input"
+                  type="search"
+                  placeholder="搜索稿件名 / 画师 / 甲方…"
+                  aria-label="搜索约稿"
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+            <div class="screen__body" id="commissionBody"></div>
+          </section>
+
+          <!-- 二级页：待办 -->
       <section class="subpage" id="todoPage" hidden aria-labelledby="todoPageTitle">
         <header class="topbar">
           <button class="iconbtn" id="btnTodoBack" type="button" aria-label="返回" title="返回"></button>

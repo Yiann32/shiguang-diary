@@ -184,6 +184,7 @@
     { name: '购物', icon: '🛍️', color: '#b05a8a' },
     { name: '居家', icon: '🏠', color: '#7a9a5e' },
     { name: '娱乐', icon: '🎬', color: '#8a6fc0' },
+    { name: '约稿', icon: '🎨', color: '#8a6fc0' },
     { name: '医疗', icon: '💊', color: '#c0453f' },
     { name: '教育', icon: '📚', color: '#5a8fa0' },
     { name: '通讯', icon: '📱', color: '#6a7f95' },
@@ -196,6 +197,7 @@
   const DEFAULT_INCOME_CATEGORIES = [
     { name: '工资', icon: '💰', color: '#4e9a6a' },
     { name: '奖金', icon: '🏆', color: '#c09a3a' },
+    { name: '约稿收入', icon: '🖌️', color: '#5a8fb0' },
     { name: '兼职', icon: '🧾', color: '#5a8fb0' },
     { name: '理财', icon: '📈', color: '#4a8a8a' },
     { name: '红包', icon: '🧧', color: '#c0453f' },
@@ -335,6 +337,7 @@
       note: toText(source.note).trim().slice(0, 60),
       ruleId: toText(source.ruleId).trim(),
       occurrenceKey: toText(source.occurrenceKey).trim(),
+      payableId: toText(source.payableId).trim(),
       createdAt,
       updatedAt: toTimestamp(source.updatedAt, createdAt),
     };
@@ -709,6 +712,430 @@
     return { pending, done, overdue, total: pending + done };
   }
 
+  /* --------------------------------------------------------- 待收款项 */
+
+  /**
+   * 待收款项（预计收入）：一笔约稿的应收。
+   * `dueDate` 可以是空字符串 —— 代表「不知道什么时候能收到」，
+   * 这类金额要单独统计，不能混进「本月预计收到」。
+   */
+  function normalizeReceivable(raw, now = Date.now(), fallbackBookId = '') {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const due = toText(source.dueDate).trim();
+    const createdAt = toTimestamp(source.createdAt, now);
+    const amount = toMoney(source.amount);
+    const received = Math.min(toMoney(source.received), amount);
+    const settled = received >= amount && amount > 0;
+    return {
+      id: toText(source.id).trim() || createId(),
+      bookId: toText(source.bookId).trim() || fallbackBookId,
+      client: toText(source.client).trim().slice(0, 20),
+      title: toText(source.title).trim().slice(0, 40),
+      amount,
+      received,
+      dueDate: isValidDateKey(due) ? due : '',
+      accountId: toText(source.accountId).trim(),
+      note: toText(source.note).trim().slice(0, 60),
+      settledAt: settled ? toTimestamp(source.settledAt, now) : null,
+      createdAt,
+      updatedAt: toTimestamp(source.updatedAt, createdAt),
+    };
+  }
+
+  /** 还差多少没收到 */
+  function receivableRemaining(item) {
+    if (!item) return 0;
+    return toMoney(Math.max(0, (Number(item.amount) || 0) - (Number(item.received) || 0)));
+  }
+
+  function isReceivableSettled(item) {
+    return receivableRemaining(item) <= 0 && Number(item && item.amount) > 0;
+  }
+
+  /** open（一分没收到）/ partial（收了一部分）/ settled（已结清） */
+  function receivableStatus(item) {
+    if (isReceivableSettled(item)) return 'settled';
+    return Number(item && item.received) > 0 ? 'partial' : 'open';
+  }
+
+  function receivableStatusLabel(item) {
+    const status = receivableStatus(item);
+    if (status === 'settled') return '已结清';
+    return status === 'partial' ? '部分收到' : '未收到';
+  }
+
+  /** 未结清的排前面；然后按约定到账日（没写日期的排最后），最后按创建时间倒序 */
+  function sortReceivables(list) {
+    return [...(list || [])].sort((a, b) => {
+      const leftDone = isReceivableSettled(a);
+      const rightDone = isReceivableSettled(b);
+      if (leftDone !== rightDone) return leftDone ? 1 : -1;
+      const leftDate = toText(a && a.dueDate);
+      const rightDate = toText(b && b.dueDate);
+      if (leftDate !== rightDate) {
+        if (!leftDate) return 1;
+        if (!rightDate) return -1;
+        return leftDate < rightDate ? -1 : 1;
+      }
+      return (b && b.createdAt ? b.createdAt : 0) - (a && a.createdAt ? a.createdAt : 0);
+    });
+  }
+
+  function sumReceivables(list) {
+    let pending = 0;
+    let settled = 0;
+    for (const item of list || []) {
+      pending += receivableRemaining(item);
+      settled += Number(item && item.received) || 0;
+    }
+    return { pending: toMoney(pending), settled: toMoney(settled), count: (list || []).length };
+  }
+
+  /**
+   * 待收汇总：
+   * - monthPending：约定在本月到账、还没收到的钱（「这个月预计收到多少」）
+   * - undated：没写约定日期、不知道什么时候能收到的钱
+   * - overdue：过了约定日期还没收到的
+   */
+  function receivableTotals(list, options) {
+    const config = options || {};
+    const today = config.today || todayKey();
+    const nowDate = parseDateKey(today) || new Date();
+    const year = Number.isInteger(config.year) ? config.year : nowDate.getFullYear();
+    const month = Number.isInteger(config.month) ? config.month : nowDate.getMonth();
+    const prefix = monthKey(year, month);
+    const open = (list || []).filter((item) => !isReceivableSettled(item));
+
+    let monthPending = 0;
+    let undated = 0;
+    let overdue = 0;
+    let later = 0;
+    let overdueCount = 0;
+    for (const item of open) {
+      const remaining = receivableRemaining(item);
+      if (!item.dueDate) {
+        undated += remaining;
+        continue;
+      }
+      if (item.dueDate < today) {
+        overdue += remaining;
+        overdueCount += 1;
+        continue;
+      }
+      if (item.dueDate.startsWith(prefix)) monthPending += remaining;
+      else if (item.dueDate > today) later += remaining;
+    }
+
+    const settledItems = (list || []).filter((item) => isReceivableSettled(item));
+    return {
+      monthPending: toMoney(monthPending),
+      undated: toMoney(undated),
+      overdue: toMoney(overdue),
+      overdueCount,
+      later: toMoney(later),
+      settled: toMoney(settledItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)),
+      openTotal: toMoney(monthPending + undated + overdue + later),
+      openCount: open.length,
+    };
+  }
+
+  function receivablesDueOn(list, date) {
+    return sortReceivables((list || []).filter((item) => item.dueDate === date));
+  }
+
+  /** 按甲方聚合：还欠我多少、已经结了多少 */
+  function clientStats(list, today = todayKey()) {
+    const rows = new Map();
+    for (const item of list || []) {
+      const key = toText(item && item.client).trim() || '未填写甲方';
+      const row = rows.get(key) || { client: key, pending: 0, settled: 0, overdue: 0, count: 0 };
+      const remaining = receivableRemaining(item);
+      row.pending += remaining;
+      row.settled += Number(item && item.received) || 0;
+      if (remaining > 0 && item.dueDate && item.dueDate < today) row.overdue += remaining;
+      row.count += 1;
+      rows.set(key, row);
+    }
+    return [...rows.values()]
+      .map((row) => ({
+        ...row,
+        pending: toMoney(row.pending),
+        settled: toMoney(row.settled),
+        overdue: toMoney(row.overdue),
+      }))
+      .sort(
+        (a, b) => b.pending - a.pending || b.settled - a.settled || a.client.localeCompare(b.client, 'zh-Hans-CN'),
+      );
+  }
+
+  /** 未来 N 个月的预计到账（按约定到账日），没写日期的单独放 undated */
+  function monthlyExpected(list, options) {
+    const config = options || {};
+    const months = config.months || 6;
+    const today = config.today || todayKey();
+    const todayDate = parseDateKey(today) || new Date();
+    const open = (list || []).filter((item) => !isReceivableSettled(item));
+    const undated = toMoney(
+      open.filter((item) => !item.dueDate).reduce((sum, item) => sum + receivableRemaining(item), 0),
+    );
+    const result = [];
+    for (let i = 0; i < months; i += 1) {
+      const date = new Date(todayDate.getFullYear(), todayDate.getMonth() + i, 1);
+      const prefix = monthKey(date.getFullYear(), date.getMonth());
+      const amount = open
+        .filter((item) => item.dueDate && item.dueDate.startsWith(prefix))
+        .reduce((sum, item) => sum + receivableRemaining(item), 0);
+      result.push({
+        year: date.getFullYear(),
+        month: date.getMonth(),
+        label: `${date.getMonth() + 1}月`,
+        amount: toMoney(amount),
+      });
+    }
+    return { months: result, undated };
+  }
+
+  /* --------------------------------------------------------- 约稿订单 */
+
+  const MONTH_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+  /**
+   * 约稿订单（我方付钱给画师）：
+   * - `deadline` 稿件截止日（日历「排单」唯一依据，可空）
+   * - `dueMonth` / `dueDate` 尾款约定付款时间（可空；两个都空 = 时间未定）
+   */
+  function normalizeCommission(raw, now = Date.now(), fallbackBookId = '') {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const createdAt = toTimestamp(source.createdAt, now);
+    const total = toMoney(source.total);
+    const paid = Math.min(toMoney(source.paid), total);
+    const deadline = toText(source.deadline).trim();
+    const dueDate = toText(source.dueDate).trim();
+    const dueMonth = toText(source.dueMonth).trim();
+    return {
+      id: toText(source.id).trim() || createId(),
+      bookId: toText(source.bookId).trim() || fallbackBookId,
+      title: toText(source.title).trim().slice(0, 40),
+      artist: toText(source.artist).trim().slice(0, 20),
+      total,
+      paid,
+      deadline: isValidDateKey(deadline) ? deadline : '',
+      dueDate: isValidDateKey(dueDate) ? dueDate : '',
+      dueMonth: MONTH_KEY_RE.test(dueMonth) ? dueMonth : '',
+      done: Boolean(source.done),
+      note: toText(source.note).trim().slice(0, 60),
+      createdAt,
+      updatedAt: toTimestamp(source.updatedAt, createdAt),
+    };
+  }
+
+  function commissionRemaining(item) {
+    if (!item) return 0;
+    return toMoney(Math.max(0, (Number(item.total) || 0) - (Number(item.paid) || 0)));
+  }
+
+  function isCommissionSettled(item) {
+    return commissionRemaining(item) <= 0 && Number(item && item.total) > 0;
+  }
+
+  /** 已完结 = 画完了 + 钱也结清了 */
+  function isCommissionClosed(item) {
+    return Boolean(item && item.done) && isCommissionSettled(item);
+  }
+
+  /** settled / tail（付过一部分）/ unpaid */
+  function commissionPayState(item) {
+    if (isCommissionSettled(item)) return 'settled';
+    return Number(item && item.paid) > 0 ? 'tail' : 'unpaid';
+  }
+
+  function commissionPayLabel(item) {
+    const state = commissionPayState(item);
+    if (state === 'settled') return '已结清';
+    return state === 'tail' ? '待付尾款' : '待付款';
+  }
+
+  function commissionProgressLabel(item) {
+    return item && item.done ? '已完稿' : '绘制中';
+  }
+
+  function commissionStatusLabel(item) {
+    const pay = commissionPayLabel(item);
+    if (isCommissionClosed(item)) return '已完结';
+    return `${pay} · ${commissionProgressLabel(item)}`;
+  }
+
+  /** 尾款约定的时间点（日期优先），用于排序与逾期判断 */
+  function commissionPayKey(item) {
+    if (!item) return '';
+    if (item.dueDate) return item.dueDate;
+    if (item.dueMonth) return `${item.dueMonth}-01`;
+    return '';
+  }
+
+  /** 尾款落在哪个月（'YYYY-MM'），时间未定返回空串 */
+  function commissionPayMonth(item) {
+    const key = commissionPayKey(item);
+    return key ? key.slice(0, 7) : '';
+  }
+
+  /** 未完结的排前面；然后按尾款时间（没写时间的排最后），最后按创建时间倒序 */
+  function sortCommissions(list) {
+    return [...(list || [])].sort((a, b) => {
+      const leftClosed = isCommissionClosed(a);
+      const rightClosed = isCommissionClosed(b);
+      if (leftClosed !== rightClosed) return leftClosed ? 1 : -1;
+      const leftKey = commissionPayKey(a);
+      const rightKey = commissionPayKey(b);
+      if (leftKey !== rightKey) {
+        if (!leftKey) return 1;
+        if (!rightKey) return -1;
+        return leftKey < rightKey ? -1 : 1;
+      }
+      const leftDeadline = toText(a && a.deadline);
+      const rightDeadline = toText(b && b.deadline);
+      if (leftDeadline !== rightDeadline) {
+        if (!leftDeadline) return 1;
+        if (!rightDeadline) return -1;
+        return leftDeadline < rightDeadline ? -1 : 1;
+      }
+      return (b && b.createdAt ? b.createdAt : 0) - (a && a.createdAt ? a.createdAt : 0);
+    });
+  }
+
+  function commissionBucket(item, options) {
+    const config = options || {};
+    const today = config.today || todayKey();
+    if (isCommissionSettled(item)) return 'settled';
+    const key = commissionPayKey(item);
+    if (!key) return 'undated';
+    if (key < today) return 'overdue';
+    const prefix = config.monthPrefix || (config.year !== undefined ? monthKey(config.year, config.month) : today.slice(0, 7));
+    if (key.startsWith(prefix)) return 'current';
+    return 'later';
+  }
+
+  /** 按「逾期 / 本月 / 以后各月 / 时间未定 / 已结清」分好组的视图数据 */
+  function commissionGroups(list, options) {
+    const config = options || {};
+    const today = config.today || todayKey();
+    const nowDate = parseDateKey(today) || new Date();
+    const year = Number.isInteger(config.year) ? config.year : nowDate.getFullYear();
+    const month = Number.isInteger(config.month) ? config.month : nowDate.getMonth();
+    const monthPrefix = monthKey(year, month);
+    const sorted = sortCommissions(list);
+
+    const overdue = [];
+    const current = [];
+    const undated = [];
+    const settled = [];
+    const upcoming = new Map();
+    for (const item of sorted) {
+      const bucket = commissionBucket(item, { today, year, month, monthPrefix });
+      if (bucket === 'settled') settled.push(item);
+      else if (bucket === 'overdue') overdue.push(item);
+      else if (bucket === 'undated') undated.push(item);
+      else if (bucket === 'current') current.push(item);
+      else {
+        const key = commissionPayMonth(item);
+        if (!upcoming.has(key)) upcoming.set(key, []);
+        upcoming.get(key).push(item);
+      }
+    }
+
+    const upcomingGroups = [...upcoming.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([key, items]) => {
+        const date = parseDateKey(`${key}-01`) || nowDate;
+        return {
+          month: key,
+          label: `${date.getFullYear()} 年 ${date.getMonth() + 1} 月`,
+          items,
+          remaining: toMoney(items.reduce((sum, item) => sum + commissionRemaining(item), 0)),
+        };
+      });
+
+    const sum = (items) => toMoney(items.reduce((total, item) => total + commissionRemaining(item), 0));
+    return {
+      overdue,
+      current,
+      upcoming: upcomingGroups,
+      undated,
+      settled,
+      overdueTotal: sum(overdue),
+      currentTotal: sum(current),
+      undatedTotal: sum(undated),
+      openTotal: toMoney(sum(overdue) + sum(current) + sum(undated) + upcomingGroups.reduce((t, g) => t + g.remaining, 0)),
+      openCount: overdue.length + current.length + undated.length + upcomingGroups.reduce((t, g) => t + g.items.length, 0),
+    };
+  }
+
+  /** 资金压力用：某个月的尾款合计（含逾期） */
+  function commissionMonthTotal(list, year, month, today = todayKey()) {
+    const prefix = monthKey(year, month);
+    let total = 0;
+    for (const item of list || []) {
+      if (isCommissionSettled(item)) continue;
+      const key = commissionPayKey(item);
+      if (!key) continue;
+      if (key.startsWith(prefix)) total += commissionRemaining(item);
+    }
+    return toMoney(total);
+  }
+
+  /**
+   * 日历「排单」用：按稿件截止日索引。
+   * 只收有 deadline 且未完结（没画完 或 还没付清）的订单。
+   */
+  function commissionDueMap(list, year, month, today = todayKey()) {
+    const prefix = monthKey(year, month);
+    const map = new Map();
+    for (const item of list || []) {
+      if (!item || !item.deadline || isCommissionClosed(item)) continue;
+      if (!item.deadline.startsWith(prefix)) continue;
+      const cell = map.get(item.deadline) || { count: 0, overdue: 0 };
+      cell.count += 1;
+      if (item.deadline < today && !item.done) cell.overdue += 1;
+      map.set(item.deadline, cell);
+    }
+    return map;
+  }
+
+  function commissionDueOn(list, date) {
+    return sortCommissions((list || []).filter((item) => item && item.deadline === date && !isCommissionClosed(item)));
+  }
+
+  /** 某天的稿件是不是已经拖过期了（还没画完） */
+  function isCommissionOverdue(item, today = todayKey()) {
+    return Boolean(item && item.deadline) && !item.done && item.deadline < today;
+  }
+
+  /* --------------------------------------------------------- 资金压力 */
+
+  /**
+   * 本月预计结余 = 预计收入（工资 + 其他收入 + 本月预计收到）− 其他固定支出 − 本月待付尾款。
+   */
+  function pressureSummary(raw) {
+    const source = raw || {};
+    const salary = toMoney(source.salary);
+    const otherIncome = toMoney(source.otherIncome);
+    const receivable = toMoney(source.receivable);
+    const fixed = toMoney(source.fixed);
+    const tail = toMoney(source.tail);
+    const income = toMoney(salary + otherIncome + receivable);
+    const balance = toMoney(income - fixed - tail);
+    return {
+      salary,
+      otherIncome,
+      receivable,
+      income,
+      fixed,
+      tail,
+      balance,
+      over: balance < 0,
+    };
+  }
+
   /* ------------------------------------------------------------ 日历网格 */
 
   function monthKey(year, month) {
@@ -1061,7 +1488,18 @@
   }
 
   /** 导出用的集合字段（v3 起备份里还会带上记账与待办） */
-  const EXPORT_COLLECTIONS = ['books', 'categories', 'accounts', 'budgets', 'recurring', 'ledger', 'todos', 'todoGroups'];
+  const EXPORT_COLLECTIONS = [
+    'books',
+    'categories',
+    'accounts',
+    'budgets',
+    'payables',
+    'recurring',
+    'ledger',
+    'receivables',
+    'todos',
+    'todoGroups',
+  ];
 
   function buildExportPayload(entries, options) {
     const config = options || {};
@@ -1302,7 +1740,20 @@
     cardDate,
     categoryIndex,
     categoryStats,
+    clientStats,
     collectTags,
+    commissionBucket,
+    commissionDueMap,
+    commissionDueOn,
+    commissionGroups,
+    commissionMonthTotal,
+    commissionPayKey,
+    commissionPayLabel,
+    commissionPayMonth,
+    commissionPayState,
+    commissionProgressLabel,
+    commissionRemaining,
+    commissionStatusLabel,
     computeStreak,
     countByDate,
     createDefaultAccounts,
@@ -1328,6 +1779,10 @@
     isEmptyLedger,
     isEmptyEntry,
     isValidDateKey,
+    isCommissionClosed,
+    isCommissionOverdue,
+    isCommissionSettled,
+    isReceivableSettled,
     ledgerToCsv,
     ledgerTotals,
     ledgerTypeLabel,
@@ -1337,15 +1792,18 @@
     monthGrid,
     monthKey,
     monthlyCounts,
+    monthlyExpected,
     normalizeAccount,
     normalizeAccountKind,
     normalizeBook,
     normalizeBudget,
     normalizeCategory,
+    normalizeCommission,
     normalizeFrequency,
     normalizeLedger,
     normalizeLedgerType,
     normalizePriority,
+    normalizeReceivable,
     normalizeRecurring,
     normalizeEntry,
     normalizeTags,
@@ -1354,11 +1812,13 @@
     parseDateKey,
     parseImport,
     pendingRecurringDates,
+    pressureSummary,
     priorityLabel,
     recurringDates,
     renderMarkdown,
     shiftDateKey,
     sortEntries,
+    sortCommissions,
     sortLedger,
     sortTodoGroups,
     sortTodos,
@@ -1371,6 +1831,13 @@
     todayKey,
     todoDueMap,
     todoStats,
+    receivableRemaining,
+    receivableStatus,
+    receivableStatusLabel,
+    receivableTotals,
+    receivablesDueOn,
+    sortReceivables,
+    sumReceivables,
     utf8Length,
     wordCount,
     yearLedgerTotals,

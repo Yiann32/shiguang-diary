@@ -2167,6 +2167,11 @@ body[data-tab='money'] .fab--money {
   color: var(--danger);
 }
 
+.caldot--schedule {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .calcell.is-today .caldot {
   background: rgba(255, 255, 255, 0.3);
   color: #fff;
@@ -2204,6 +2209,276 @@ body[data-tab='money'] .fab--money {
 .daysum__value {
   font-size: 0.95rem;
   font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------- 日历四态按钮 / 约稿专区 */
+
+.modebtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.15s ease;
+}
+
+.modebtn:hover {
+  background: var(--surface-2);
+}
+
+.modebtn:active {
+  transform: scale(0.96);
+}
+
+.modebtn__icon {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+/* 左上角的日期本身就是「选择年月」的入口 */
+button.caldate {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.caldate:hover .caldate__main {
+  color: var(--accent);
+}
+
+.subtoolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 18px 10px;
+}
+
+.subtoolbar .segmented {
+  margin-bottom: 0;
+}
+
+.searchbar--inline {
+  padding: 0;
+}
+
+/* 状态小标签：待付款/逾期=红，待付尾款=靛蓝，已结清=灰 */
+.status-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-tag--unpaid,
+.status-tag--overdue {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.status-tag--tail {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.orderrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orderrow:last-child {
+  border-bottom: 0;
+}
+
+.orderrow:hover {
+  background: var(--surface-2);
+}
+
+.orderrow__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orderrow__title {
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orderrow__sub {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orderrow__amount {
+  flex: none;
+  font-size: 0.9rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.orderrow__amount--open {
+  color: var(--danger);
+}
+
+.orderrow__amount--settled {
+  color: var(--text-faint);
+}
+
+.orderrow__pay {
+  flex: none;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.orderrow__pay:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ordergroup {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 0 6px;
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+
+.ordergroup:first-child {
+  margin-top: 0;
+}
+
+.ordergroup__total {
+  font-variant-numeric: tabular-nums;
+}
+
+.ordergroup--overdue .ordergroup__name {
+  color: var(--danger);
+}
+
+/* 记账首页那张「约稿」卡里的三行入口 */
+.commission-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.commission-row:last-child {
+  border-bottom: 0;
+}
+
+.commission-row__label {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.84rem;
+  color: var(--text-dim);
+}
+
+.commission-row__value {
+  flex: none;
+  font-size: 0.92rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.commission-row__value--out {
+  color: var(--danger);
+}
+
+.commission-row__value--in {
+  color: var(--accent);
+}
+
+/* 资金压力 */
+.pressure-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+}
+
+.pressure-result.is-over {
+  background: var(--danger-soft);
+}
+
+.pressure-result__label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.pressure-result__value {
+  font-size: 1.4rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.pressure-result.is-over .pressure-result__value {
+  color: var(--danger);
+}
+
+.pressure-result__hint {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+.pressure-rows {
+  margin-top: 10px;
+  font-size: 0.76rem;
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
 
