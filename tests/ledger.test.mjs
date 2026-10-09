@@ -178,6 +178,11 @@ test('记账：分类统计按金额排行并算占比，未分类归到「未�
   assert.equal(rows[0].ratio, 0.8);
   assert.equal(rows[1].count, 1);
   assert.equal(rows[0].icon, '📦'); // 没给图标时用兜底
+
+  // 收入侧同样能出「本月收入构成」
+  const incomeCategories = [normalizeCategory({ id: 'pay', kind: 'income', name: '工资' })];
+  const incomeRows = categoryStats(list, 'income', incomeCategories);
+  assert.deepEqual(incomeRows.map((row) => [row.name, row.amount, row.ratio]), [['工资', 500, 1]]);
 });
 
 test('记账：账户余额含转账，信用卡可以是负的', () => {
@@ -926,17 +931,20 @@ test('资金压力：预计收入 − 固定支出 − 本月尾款', () => {
 
 test('仓库层：约稿订单增改删 + 付款生成支出流水', async () => {
   const store = await memoryStore();
+  const today = model.todayKey();
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7)) - 1;
   const order = await store.addCommission({
     title: '双人半身',
     artist: '阿蓝',
     total: 2000,
-    deadline: '2026-10-20',
-    dueMonth: '2026-10',
+    deadline: today,
+    dueMonth: today.slice(0, 7),
   });
   assert.ok(order.id);
   assert.equal(await store.addCommission({ artist: '没写稿件名' }), null, '稿件名必填');
   assert.equal(store.commissionList().length, 1);
-  assert.equal(store.commissionGroups(2026, 9).currentTotal, 2000);
+  assert.equal(store.commissionGroups(year, month).currentTotal, 2000, '只填月份的算本月要付，不算逾期');
 
   // 付 800：生成一笔支出，尾款变 1200，进入「待付尾款」
   const first = await store.settleCommission(order.id, { amount: 800, date: '2026-10-05' });
@@ -954,7 +962,7 @@ test('仓库层：约稿订单增改删 + 付款生成支出流水', async () =>
   assert.equal(store.ledgerList().length, 2);
   assert.equal(await store.settleCommission(order.id, {}), null);
   assert.equal(store.ledgerList().length, 2);
-  assert.equal(store.commissionGroups(2026, 9).openTotal, 0);
+  assert.equal(store.commissionGroups(year, month).openTotal, 0);
 
   // 完稿 + 结清 = 已完结
   await store.toggleCommissionDone(order.id);

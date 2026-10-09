@@ -2484,6 +2484,37 @@
 
     /* -------------------------------------------------------- 记账统计 */
 
+    /** 分类明细条（支出 / 收入共用） */
+    function categoryDetailPanel(title, rows, emptyText) {
+      const block = el('div', { class: 'panel' });
+      block.append(el('h3', { class: 'section__title', text: title }));
+      if (!rows.length) {
+        block.append(el('p', { class: 'hint', text: emptyText }));
+        return block;
+      }
+      const max = Math.max(...rows.map((row) => row.amount), 1);
+      for (const row of rows) {
+        block.append(
+          el('div', { class: 'lstats__row' }, [
+            el('div', { class: 'lstats__head' }, [
+              el('span', { class: 'lstats__name', text: `${row.icon} ${row.name}` }),
+              el('span', {
+                class: 'lstats__value',
+                text: `¥${model.formatMoney(row.amount)} · ${Math.round(row.ratio * 100)}%`,
+              }),
+            ]),
+            el('div', { class: 'lstats__track' }, [
+              el('span', {
+                class: 'lstats__fill',
+                style: { width: `${Math.round((row.amount / max) * 100)}%`, background: row.color },
+              }),
+            ]),
+          ]),
+        );
+      }
+      return block;
+    }
+
     function renderLedgerStats() {
       if (!dom.ledgerStatsBody) return;
       const { year, month } = moneyPeriod();
@@ -2519,28 +2550,23 @@
           donutBlock(rows, '这段时间没有支出记录'),
         ]),
       );
-      if (rows.length) {
-        const max = Math.max(...rows.map((row) => row.amount), 1);
-        const block = el('div', { class: 'panel' });
-        block.append(el('h3', { class: 'section__title', text: '分类明细' }));
-        for (const row of rows) {
-          block.append(
-            el('div', { class: 'lstats__row' }, [
-              el('div', { class: 'lstats__head' }, [
-                el('span', { class: 'lstats__name', text: `${row.icon} ${row.name}` }),
-                el('span', { class: 'lstats__value', text: `¥${model.formatMoney(row.amount)} · ${Math.round(row.ratio * 100)}%` }),
-              ]),
-              el('div', { class: 'lstats__track' }, [
-                el('span', {
-                  class: 'lstats__fill',
-                  style: { width: `${Math.round((row.amount / max) * 100)}%`, background: row.color },
-                }),
-              ]),
-            ]),
-          );
-        }
-        body.append(block);
-      }
+      body.append(categoryDetailPanel('支出明细', rows, '这段时间没有支出记录'));
+
+      // 收入侧：本月（或本年）的钱是从哪来的
+      const incomeRows = store.categoryStats('income', year, yearMode ? undefined : month);
+      body.append(
+        el('div', { class: 'panel' }, [
+          el('h3', { class: 'section__title', text: yearMode ? `${year} 年收入构成` : `${month + 1} 月收入构成` }),
+          donutBlock(incomeRows, '这段时间没有收入记录'),
+          incomeRows.length
+            ? el('p', {
+                class: 'hint hint--sub',
+                text: `合计 ¥${model.formatMoney(totals.income)} · ${incomeRows.length} 个分类`,
+              })
+            : null,
+        ]),
+      );
+      body.append(categoryDetailPanel(`${yearMode ? '本年' : '本月'}收入明细`, incomeRows, '这段时间没有收入记录'));
 
       const months = model.monthlyLedgerTotals(store.ledgerList(), 6, today());
       const peak = Math.max(1, ...months.map((item) => Math.max(item.income, item.expense)));
@@ -3966,33 +3992,53 @@
 
     /* ---------------------------------------------------------- 导入导出 */
 
-    function exportJson() {
+    /** 导出成功后的提示：原生 App 里是「已写好，自己选保存位置」 */
+    function exportToast(result, message) {
+      toast(result && result.native ? '已导出，选保存位置或发送给自己' : message, {
+        tone: 'success',
+        duration: 3600,
+      });
+    }
+
+    async function exportJson() {
       if (!state.entries.length) {
         toast('还没有日记可以导出', { tone: 'error' });
         return;
       }
       const payload = store.exportPayload();
-      downloadFile(`日记备份-${today()}.json`, JSON.stringify(payload, null, 2), 'application/json');
-      toast('已导出 JSON（不含图片，图片请用完整备份）', { tone: 'success', duration: 3600 });
+      try {
+        const result = await downloadFile(`日记备份-${today()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+        exportToast(result, '已导出 JSON（不含图片，图片请用完整备份）');
+      } catch (error) {
+        toast(`导出失败：${error.message}`, { tone: 'error', duration: 4200 });
+      }
     }
 
-    function exportMarkdown() {
+    async function exportMarkdown() {
       if (!state.entries.length) {
         toast('还没有日记可以导出', { tone: 'error' });
         return;
       }
-      downloadFile(`日记-${today()}.md`, store.exportMarkdown(), 'text/markdown;charset=utf-8');
-      toast('已导出 Markdown', { tone: 'success' });
+      try {
+        const result = await downloadFile(`日记-${today()}.md`, store.exportMarkdown(), 'text/markdown;charset=utf-8');
+        exportToast(result, '已导出 Markdown');
+      } catch (error) {
+        toast(`导出失败：${error.message}`, { tone: 'error', duration: 4200 });
+      }
     }
 
-    function exportLedgerCsv() {
+    async function exportLedgerCsv() {
       if (!store.ledgerList().length) {
         toast('还没有记账可以导出', { tone: 'error' });
         return;
       }
-      // 带 BOM，Excel 打开中文才不乱码
-      downloadFile(`记账-${today()}.csv`, `\ufeff${store.exportLedgerCsv()}`, 'text/csv;charset=utf-8');
-      toast('已导出记账 CSV', { tone: 'success' });
+      try {
+        // 带 BOM，Excel 打开中文才不乱码
+        const result = await downloadFile(`记账-${today()}.csv`, `\ufeff${store.exportLedgerCsv()}`, 'text/csv;charset=utf-8');
+        exportToast(result, '已导出记账 CSV');
+      } catch (error) {
+        toast(`导出失败：${error.message}`, { tone: 'error', duration: 4200 });
+      }
     }
 
     async function exportBundle() {
@@ -4008,8 +4054,8 @@
         const bytes = await store.exportBundle(({ done }) => {
           button.textContent = `正在打包… ${done}`;
         });
-        downloadFile(`日记完整备份-${today()}.zip`, new Blob([bytes], { type: 'application/zip' }));
-        toast('已导出完整备份（含图片）', { tone: 'success' });
+        const result = await downloadFile(`日记完整备份-${today()}.zip`, new Blob([bytes], { type: 'application/zip' }));
+        exportToast(result, '已导出完整备份（含图片）');
       } catch (error) {
         toast(`导出失败：${error.message}`, { tone: 'error', duration: 4200 });
       } finally {

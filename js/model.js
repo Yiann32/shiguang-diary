@@ -1121,8 +1121,14 @@
     if (isCommissionSettled(item)) return 'settled';
     const key = commissionPayKey(item);
     if (!key) return 'undated';
-    if (key < today) return 'overdue';
     const prefix = config.monthPrefix || (config.year !== undefined ? monthKey(config.year, config.month) : today.slice(0, 7));
+    // 只填了月份（没写具体哪天）的：整月都算「本月要付」，不会因为过了 1 号就变逾期
+    if (!item.dueDate) {
+      const month = commissionPayMonth(item);
+      if (month === prefix) return 'current';
+      return month < prefix ? 'overdue' : 'later';
+    }
+    if (key < today) return 'overdue';
     if (key.startsWith(prefix)) return 'current';
     return 'later';
   }

@@ -12,8 +12,8 @@
 
 <p align="center">
   <img src="screenshots/mobile-keypad.png" width="250" alt="记一笔：金额键盘与分类九宫格" />
+  <img src="screenshots/mobile-ledger-stats.png" width="250" alt="记账统计：支出与收入构成" />
   <img src="screenshots/mobile-todo.png" width="250" alt="待办：完成统计与归档" />
-  <img src="screenshots/mobile-schedule.png" width="250" alt="日历的排单模式" />
 </p>
 
 ![桌面端深色](screenshots/desktop-dark.png)
@@ -43,7 +43,7 @@
 - 预算：每月总预算 + 分类预算，首页进度条显示已用 / 剩余，超支变红
 - 周期记账：房租、工资这类固定收支，规则建好后自动补上到期的那几笔（幂等，不会重复记）
 - 多账本：生活 / 工作分开记，流水、分类、账户、预算、周期规则都按账本隔离
-- 统计：本月 / 本年切换，分类环形图与明细条、最近 6 个月收支双色柱状、账户余额
+- 统计：本月 / 本年切换，**支出构成与收入构成两份环形图 + 明细条**、最近 6 个月收支双色柱状、账户余额
 - 导出：记账可单独导出 CSV（Excel 直接打开），完整备份也会带上记账数据
 
 ### 约稿（约稿支出 / 待收款项 / 资金压力）
@@ -151,6 +151,7 @@ npx cap open android                                # Android Studio → Build �
 
 - 数据保存在设备本地数据库（IndexedDB）里，**不会**发送到任何服务器；IndexedDB 不可用时会自动降级到 localStorage，再退到内存并给出提示。
 - 「我的 → 备份与迁移」里可以导出完整备份（v3，含记账与待办）、JSON、Markdown 和记账 CSV。
+- **手机上导出真的会出文件**：原生 App 里 WebView 不支持网页式下载，所以导出会先把文件写进应用缓存再**调起系统分享面板**，你选「保存到文件 / 发给微信 / 发到自己邮箱」都行；在电脑浏览器里还是直接下载。
 - 注意：清理浏览器数据、换设备、卸载 App 都会带走数据，请定期导出备份。
 
 ## 项目结构

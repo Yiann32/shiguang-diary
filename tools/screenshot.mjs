@@ -229,6 +229,15 @@ try {
   await cdp.evaluate('document.querySelector("#btnCommissionBack").click()', session);
   await settle(320);
 
+  // 手机端：记账统计（支出构成 + 收入构成）
+  await cdp.evaluate('document.querySelector("[data-tab=\'money\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnMoneyStats").click()', session);
+  await cdp.waitFor('document.querySelector("#ledgerStatsPage").hidden === false', session, { label: '记账统计' });
+  await settle(400);
+  save('mobile-ledger-stats.png', await cdp.screenshot(session));
+  await cdp.evaluate('document.querySelector("#btnLedgerStatsBack").click()', session);
+  await settle(320);
+
   // 手机端：待办二级页（完成统计 + 按天归档）
   await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);
   await cdp.evaluate('document.querySelector("#btnTodoMore").click()', session);

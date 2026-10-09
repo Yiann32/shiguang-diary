@@ -8,7 +8,8 @@
 | 项 | 值 |
 | --- | --- |
 | 技术栈 | 零依赖、无构建：原生 HTML/CSS + 经典 `<script>`；Android 用 Capacitor 8 |
-| 模块 | 日记（时间线 / 日历 / 编辑器）、记账（账本 / 分类 / 账户 / 预算 / 周期）、待办、约稿（订单尾款 / 待收款项 / 资金压力） |
+| 模块 | 日记（时间线 / 日历 / 编辑器）、记账（账本 / 分类 / 账户 / 预算 / 周期 / 统计）、待办、约稿（订单尾款 / 待收款项 / 资金压力） |
+| 依赖 | 运行时零依赖的网页；原生打包用 Capacitor 8（`@capacitor/app` + `@capacitor/filesystem` + `@capacitor/share`，**后两个是导出用的，别删**） |
 | 数据 | 全部本地（IndexedDB，逐级降级到 localStorage → 内存），不联网 |
 | 测试 | `npm test` 单元测试；`npm run smoke` 浏览器端到端（需本机 Chrome / Edge） |
 | 产物 | `npm run build:native` 生成 `www/`，再交给 Capacitor 打 APK |
@@ -118,6 +119,8 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 22. 搬过 `GRADLE_USER_HOME` 后要清 `caches/<版本>/transforms`、`fileHashes`、`build-cache-1`、`daemon`，并先 `gradlew --stop`。
 23. `npx cap add android` 之后必须再跑 `node tools/setup-android.mjs`（图标 + 国内镜像）。
 24. **改 `js/` 后必须 `npm run build:native`**，进包的是 `www/`。
+25. **Capacitor 的 Android WebView 不处理 blob 下载**（`@capacitor/android` 里根本没设 `setDownloadListener`）：`<a download>` + `URL.createObjectURL` 在网页里正常，装成 App 点了等于什么都没发生（导出「没有实际文件」就是这么来的）。`ui.downloadFile` 现在分两条路——网页走 `<a download>`；原生走 `@capacitor/filesystem` 写进 CACHE，再用 `@capacitor/share` 调起系统分享。**这两个插件不能删**，删了导出又会静默失效。
+26. 改过 `package.json` 的依赖后要跑 `npx cap sync android`，否则 `android/app/src/main/assets/capacitor.plugins.json` 里没有新插件。
 
 ## 5. 每轮怎么推进
 

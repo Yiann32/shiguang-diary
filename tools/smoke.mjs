@@ -1017,6 +1017,63 @@ try {
   check('file:// 下日历也能渲染', true);
 
   check('全程没有未捕获的脚本错误', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | ').slice(0, 220));
+
+  // 导出：网页里真的产生下载；原生 App 里（WebView 不支持 blob 下载）要写文件 + 调起分享
+  check(
+    '网页端导出会真的产生下载文件',
+    await cdp.evaluate(
+      `(async () => {
+        const original = URL.createObjectURL;
+        let created = false;
+        URL.createObjectURL = (blob) => {
+          created = true;
+          return original.call(URL, blob);
+        };
+        const result = await window.Diary.ui.downloadFile('导出测试.txt', 'hello', 'text/plain');
+        URL.createObjectURL = original;
+        return created && Boolean(result) && result.native === false;
+      })()`,
+      session,
+    ),
+  );
+  check(
+    '原生端导出会写进缓存目录并调起系统分享',
+    await cdp.evaluate(
+      `(async () => {
+        const calls = [];
+        window.Capacitor = {
+          isNativePlatform: () => true,
+          Plugins: {
+            Filesystem: {
+              writeFile: async (options) => {
+                calls.push(['write', options.path, options.directory, typeof options.data]);
+                return { uri: 'file:///cache/' + options.path };
+              },
+            },
+            Share: {
+              share: async (options) => {
+                calls.push(['share', options.files && options.files[0]]);
+              },
+            },
+          },
+        };
+        const result = await window.Diary.ui.downloadFile('导出测试.json', '{"a":1}', 'application/json');
+        delete window.Capacitor;
+        return (
+          result.native === true &&
+          calls[0] &&
+          calls[0][0] === 'write' &&
+          calls[0][1] === '导出测试.json' &&
+          calls[0][2] === 'CACHE' &&
+          calls[0][3] === 'string' &&
+          calls[1] &&
+          calls[1][0] === 'share' &&
+          String(calls[1][1]).endsWith('导出测试.json')
+        );
+      })()`,
+      session,
+    ),
+  );
 } catch (error) {
   check(`执行中断：${error.message}`, false);
 } finally {

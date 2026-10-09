@@ -130,9 +130,45 @@
     }, config.duration || 2600);
   }
 
-  /** 下载文件。 */
-  function downloadFile(filename, content, mime) {
+  const isNativePlatform = () =>
+    Boolean(
+      root.Capacitor &&
+        (typeof root.Capacitor.isNativePlatform !== 'function' || root.Capacitor.isNativePlatform()),
+    );
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result || '');
+        resolve(text.slice(text.indexOf(',') + 1));
+      };
+      reader.onerror = () => reject(reader.error || new Error('文件读取失败'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * 导出文件。
+   * 网页里直接 <a download>；原生 App 里 WebView 根本不处理 blob 下载
+   * （Capacitor 没有设置 DownloadListener，点了等于没发生），
+   * 所以改成「写进缓存目录 + 交给系统分享」，用户自己选保存到哪或发给谁。
+   */
+  async function downloadFile(filename, content, mime) {
     const blob = content instanceof Blob ? content : new Blob([content], { type: mime || 'text/plain;charset=utf-8' });
+    const plugins = (root.Capacitor && root.Capacitor.Plugins) || {};
+    if (isNativePlatform() && plugins.Filesystem) {
+      const data = await blobToBase64(blob);
+      const saved = await plugins.Filesystem.writeFile({ path: filename, data, directory: 'CACHE' });
+      if (plugins.Share) {
+        try {
+          await plugins.Share.share({ title: filename, files: [saved.uri], dialogTitle: filename });
+        } catch (error) {
+          // 用户在分享面板里点了取消：文件已经写好了，不算失败
+        }
+      }
+      return { native: true, uri: saved.uri };
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -141,6 +177,7 @@
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
+    return { native: false };
   }
 
   function openDialog(dialog) {
