@@ -86,3 +86,42 @@ if (version) {
 console.log('\n完成。接下来：');
 console.log('  1. npx cap sync android');
 console.log('  2. 用 Android Studio 打开 android/ 目录，等 Gradle 同步完，Build → Build APK(s)');
+
+/* --------------------------------------------------- 3. 固定 debug 签名钥匙 */
+
+/**
+ * 默认的 ~/.android/debug.keystore 会因为换 JDK / 换环境目录而重新生成，
+ * 钥匙一变，新包就再也覆盖安装不上已装的版本（INSTALL_FAILED_UPDATE_INCOMPATIBLE），
+ * 手机上只能卸载重装 = 日记和账本全丢。所以把钥匙固定在 signing/debug.keystore。
+ */
+const appGradleFile = join(androidDir, 'app', 'build.gradle');
+const keystore = join(root, 'signing', 'debug.keystore');
+if (!(await exists(keystore))) {
+  console.log('没有 signing/debug.keystore，跳过签名固定');
+} else {
+  let appGradle = await readFile(appGradleFile, 'utf8');
+  if (appGradle.includes('signingConfigs')) {
+    console.log('app/build.gradle 里已经有 signingConfigs，跳过');
+  } else {
+    const signingLines = [
+      '    signingConfigs {',
+      '        // 固定用项目里这把 debug 钥匙：和手机上已安装的版本一致。',
+      '        // 换了钥匙就再也覆盖安装不上，只能卸载重装（会丢数据），所以别删、别换。',
+      '        debug {',
+      "            storeFile file('../../signing/debug.keystore')",
+      "            storePassword 'android'",
+      "            keyAlias 'androiddebugkey'",
+      "            keyPassword 'android'",
+      '        }',
+      '    }',
+      '',
+    ];
+    appGradle = appGradle.replace('    buildTypes {\n', `${signingLines.join('\n')}    buildTypes {\n`);
+    appGradle = appGradle.replace(
+      '    buildTypes {\n        release {',
+      '    buildTypes {\n        debug {\n            signingConfig signingConfigs.debug\n        }\n        release {',
+    );
+    await writeFile(appGradleFile, appGradle, 'utf8');
+    console.log('app/build.gradle 已固定 debug 签名为 signing/debug.keystore');
+  }
+}
