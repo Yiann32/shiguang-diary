@@ -129,6 +129,15 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
     cd android; .\gradlew.bat assembleDebug
     ```
     （`android/app/build.gradle` 的 `signingConfigs.debug` 会优先读这个环境变量。）要彻底统一成一把钥匙，得让那台机器走一次「导出完整备份 → 卸载 → 装 96 版 → 导入备份」。
+29. **如果对方手机里那份的钥匙两把都不是**（典型现象：我们用 96 和 80 打的两个包都报「已安装了签名冲突的应用」），说明那个包被第三方渠道**重新签名**过（浏览器 / 应用商店的「极速安装」就会干这事）。这种包永远没法被我们的官方包覆盖，只能：
+    - **保数据**：用 adb 把旧包数据整包抽出来，卸载 → 装官方包 → 再写回去（`run-as` 需要旧包是 debug 包）。救援包做在 `D:\下载\拾光日记-数据救援包.zip`，内含 `adb.exe` 与两个一键 bat。
+    - **不卸载**：装「改包名版」并存。打包方式：
+      ```powershell
+      $env:SHIGUANG_APP_ID='com.shiguang.diary.app'
+      cd android; .\gradlew.bat assembleDebug
+      ```
+      （`applicationId` 已改成优先读这个环境变量。）
+    - **给用户的忠告**：以后升级先把 APK 存到手机本地再装，别走浏览器 / 应用商店的「极速安装」，否则又会被换钥匙。
 
 ## 5. 每轮怎么推进
 
