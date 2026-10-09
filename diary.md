@@ -122,6 +122,13 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 25. **Capacitor 的 Android WebView 不处理 blob 下载**（`@capacitor/android` 里根本没设 `setDownloadListener`）：`<a download>` + `URL.createObjectURL` 在网页里正常，装成 App 点了等于什么都没发生（导出「没有实际文件」就是这么来的）。`ui.downloadFile` 现在分两条路——网页走 `<a download>`；原生走 `@capacitor/filesystem` 写进 CACHE，再用 `@capacitor/share` 调起系统分享。**这两个插件不能删**，删了导出又会静默失效。
 26. 改过 `package.json` 的依赖后要跑 `npx cap sync android`，否则 `android/app/src/main/assets/capacitor.plugins.json` 里没有新插件。
 27. **debug 签名钥匙必须固定住**：默认的 `~/.android/debug.keystore` 会随 JDK / 环境目录变化重新生成，钥匙一换，新包就再也覆盖安装不上手机里已装的版本（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），只能卸载重装 = 日记和账本全丢。现在固定用项目里的 `signing/debug.keystore`（`tools/setup-android.mjs` 会把 `signingConfigs.debug` 写进 `android/app/build.gradle`，默认位置也恢复成了同一把）。**手机里已装版本的证书指纹是 `96:BE:23:BB:...:D0:84:D6:FA`；这把钥匙丢了就永远无法覆盖升级，务必留副本**（`signing/` 已在 .gitignore 里，不会进仓库）。打包后可以用 `apksigner verify --print-certs app-debug.apk` 核对指纹。
+28. **曾经流出去的包有两把钥匙**：本机手机装的是 **96**；另一个用户的手机装的是 **80**（10/1~10/9 之间默认钥匙变成 80 那阵子发出去的）。两把都留在项目里：`signing/debug.keystore` = 96（常规打包用），`signing/debug-key80.keystore` = 80。要覆盖装「80 版」的机器时：
+    ```powershell
+    $env:JAVA_HOME='C:\Users\Unknow\.jdks\jbr-21.0.11'
+    $env:SHIGUANG_KEYSTORE='D:/AI Coding/Time-notes/signing/debug-key80.keystore'
+    cd android; .\gradlew.bat assembleDebug
+    ```
+    （`android/app/build.gradle` 的 `signingConfigs.debug` 会优先读这个环境变量。）要彻底统一成一把钥匙，得让那台机器走一次「导出完整备份 → 卸载 → 装 96 版 → 导入备份」。
 
 ## 5. 每轮怎么推进
 
