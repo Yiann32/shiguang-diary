@@ -6,7 +6,7 @@
  *   npm run smoke
  */
 
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -860,6 +860,200 @@ try {
   );
   await cdp.evaluate('document.querySelector("#btnTodoBack").click()', session);
   await cdp.waitFor('document.querySelector("#todoPage").hidden === true', session, { label: '退出待办页' });
+
+  /* ---- 进度条填充 / 账户 chip / 引用记账 / 收入构成 / 待办折叠 / 备份往返 ---- */
+
+  // 先设一个月度总预算，好检查预算条到底有没有画出填充
+  await cdp.evaluate('document.querySelector("[data-tab=\'money\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnMoneySetup").click()', session);
+  await cdp.waitFor('document.querySelector("#ledgerSetupPage").hidden === false', session, { label: '账本设置' });
+  await cdp.evaluate(
+    `[...document.querySelectorAll('#ledgerSetupBody .listrow')].find((row) => row.textContent.includes('每月总预算')).click()`,
+    session,
+  );
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '预算弹窗' });
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="amount"]', '3000'), session);
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await new Promise((done) => setTimeout(done, 350));
+  await cdp.evaluate('document.querySelector("#btnSetupBack").click()', session);
+  await cdp.waitFor('document.querySelector("#ledgerSetupPage").hidden === true', session, { label: '退出设置' });
+  await cdp.waitFor('Boolean(document.querySelector(".budgetbar__fill"))', session, { label: '预算条出现' });
+  check(
+    '预算进度条真的画出了填充（宽度 > 0）',
+    await cdp.evaluate(`document.querySelector('.budgetbar__fill').getBoundingClientRect().width > 0`, session),
+  );
+  check(
+    '记账首页同时有支出构成与收入构成',
+    await cdp.evaluate(
+      `document.querySelector('#moneyChart').textContent.includes('本月支出构成')
+        && document.querySelector('#moneyChart').textContent.includes('本月收入构成')`,
+      session,
+    ),
+  );
+
+  // 记账统计：收入分类（环形图 + 明细），明细条也要有填充
+  await cdp.evaluate('document.querySelector("#btnMoneyStats").click()', session);
+  await cdp.waitFor('document.querySelector("#ledgerStatsPage").hidden === false', session, { label: '记账统计' });
+  check(
+    '记账统计里有「收入分类」，带环形图与明细列表',
+    await cdp.evaluate(
+      `document.querySelector('#ledgerStatsBody').textContent.includes('收入分类')
+        && document.querySelectorAll('#ledgerStatsBody .donut__chart').length >= 2
+        && document.querySelectorAll('#ledgerStatsBody .lstats__row').length >= 1`,
+      session,
+    ),
+  );
+  check(
+    '分类明细条也有填充（宽度 > 0）',
+    await cdp.evaluate(`document.querySelector('.lstats__fill').getBoundingClientRect().width > 0`, session),
+  );
+  await cdp.evaluate('document.querySelector("#btnLedgerStatsBack").click()', session);
+  await cdp.waitFor('document.querySelector("#ledgerStatsPage").hidden === true', session, { label: '退出记账统计' });
+
+  // 键盘上的账户 chip：新建一个「微信」账户再切过去
+  await cdp.evaluate('document.querySelector("#btnMoneySetup").click()', session);
+  await cdp.waitFor('document.querySelector("#ledgerSetupPage").hidden === false', session, { label: '账本设置' });
+  await cdp.evaluate(`document.querySelector('#ledgerSetupBody .setting .setting__head .btn').click()`, session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '新建账户弹窗' });
+  await cdp.evaluate(typeInto('#formDialogBody [data-field="name"]', '微信'), session);
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await new Promise((done) => setTimeout(done, 350));
+  await cdp.evaluate('document.querySelector("#btnSetupBack").click()', session);
+  await cdp.waitFor('document.querySelector("#ledgerSetupPage").hidden === true', session, { label: '退出设置' });
+
+  await cdp.evaluate('document.querySelector("#btnMoneyAdd").click()', session);
+  await cdp.waitFor('document.querySelector("#keypad").hidden === false', session, { label: '金额键盘' });
+  check(
+    '键盘 chips 里有账户',
+    await cdp.evaluate(`Boolean(document.querySelector("#keypadChips [data-chip='account']"))`, session),
+  );
+  await cdp.evaluate(`document.querySelector("#keypadChips [data-chip='account']").click()`, session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '选账户弹窗' });
+  await cdp.evaluate(
+    `(() => {
+      const select = document.querySelector('#formDialogBody [data-field="accountId"]');
+      const option = [...select.options].find((item) => item.textContent === '微信');
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return select.value;
+    })()`,
+    session,
+  );
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await new Promise((done) => setTimeout(done, 300));
+  check(
+    '账户 chip 跟着切到「微信」',
+    await cdp.evaluate(`document.querySelector("#keypadChips [data-chip='account']").textContent === '微信'`, session),
+  );
+  for (const key of ['9', '9']) await cdp.evaluate(tapKey(key), session);
+  await cdp.evaluate(tapKey('完成'), session);
+  await cdp.waitFor('document.querySelector("#keypad").hidden === true', session, { label: '关闭键盘' });
+  check(
+    '切换账户后，这一笔记在新账户上',
+    await cdp.evaluate(
+      `new Promise((resolve) => {
+        const request = indexedDB.open('diary-db');
+        request.onsuccess = () => {
+          const tx = request.result.transaction(['ledger', 'accounts'], 'readonly');
+          const ledger = tx.objectStore('ledger').getAll();
+          const accounts = tx.objectStore('accounts').getAll();
+          tx.oncomplete = () => {
+            const entry = ledger.result.find((item) => item.amount === 99);
+            const account = entry && accounts.result.find((item) => item.id === entry.accountId);
+            resolve(Boolean(account) && account.name === '微信');
+          };
+          tx.onerror = () => resolve(false);
+        };
+        request.onerror = () => resolve(false);
+      })`,
+      session,
+    ),
+  );
+
+  // 日记里引用一条记账
+  await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);
+  await cdp.waitFor('document.querySelectorAll(".card").length >= 1', session, { label: '时间线卡片' });
+  await cdp.evaluate('document.querySelectorAll(".card")[0].click()', session);
+  await cdp.waitFor('document.querySelector("#editor").hidden === false', session, { label: '打开日记' });
+  const quoteBefore = await cdp.evaluate('document.querySelector("#fContent").value.length', session);
+  await cdp.evaluate('document.querySelector("#btnQuoteLedger").click()', session);
+  await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '引用记账弹窗' });
+  await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+  await new Promise((done) => setTimeout(done, 500));
+  check(
+    '引用记账插进正文的是一行带金额的引用',
+    await cdp.evaluate(
+      `(() => {
+        const value = document.querySelector('#fContent').value;
+        return value.includes('> ') && value.includes('¥') && value.length > ${quoteBefore};
+      })()`,
+      session,
+    ),
+  );
+  await cdp.evaluate('document.querySelector("#btnBack").click()', session);
+  await cdp.waitFor('document.querySelector("#editor").hidden === true', session, { label: '关掉编辑器' });
+
+  // 待办卡片折叠
+  await cdp.evaluate('document.querySelector("#btnTodoFold").click()', session);
+  await cdp.waitFor('document.querySelector("#todoCardBody").hidden === true', session, { label: '待办收起' });
+  check(
+    '待办卡片能收起成一行',
+    await cdp.evaluate(`document.querySelector('#todoCardTitle').textContent.includes('待办 ·')`, session),
+  );
+  await cdp.evaluate('document.querySelector("#btnTodoFold").click()', session);
+  await cdp.waitFor('document.querySelector("#todoCardBody").hidden === false', session, { label: '待办展开' });
+  check('再点一下能展开', true);
+
+  // 导出完整备份 → 覆盖导入：数量与时间必须一模一样
+  const snapshot = async () => ({
+    cards: await cdp.evaluate('document.querySelectorAll(".card").length', session),
+    cardTime: await cdp.evaluate(
+      `document.querySelector('.card__time') ? document.querySelector('.card__time').textContent : ''`,
+      session,
+    ),
+    flow: await cdp.evaluate('document.querySelectorAll("#moneyFlow .mflow__row").length', session),
+    todos: await cdp.evaluate('document.querySelectorAll("#todoList .todo").length', session),
+  });
+  const beforeRoundTrip = await snapshot();
+  const downloadDir = mkdtempSync(join(tmpdir(), 'diary-download-'));
+  await cdp.send('Browser.setDownloadBehavior', {
+    behavior: 'allow',
+    downloadPath: downloadDir,
+    eventsEnabled: true,
+  });
+  await cdp.evaluate('document.querySelector("[data-tab=\'profile\']").click()', session);
+  await cdp.evaluate('document.querySelector("#btnExportBundle").click()', session);
+  let backupZip = null;
+  for (let attempt = 0; attempt < 80 && !backupZip; attempt += 1) {
+    const files = readdirSync(downloadDir).filter((name) => name.endsWith('.zip'));
+    if (files.length) backupZip = join(downloadDir, files[0]);
+    else await new Promise((done) => setTimeout(done, 250));
+  }
+  check('点「导出完整备份」真的落下一个 zip 文件', Boolean(backupZip), backupZip || '没等到文件');
+  if (backupZip) {
+    await cdp.send('DOM.enable', {}, session);
+    const { root: zipRoot } = await cdp.send('DOM.getDocument', {}, session);
+    const { nodeId: zipNode } = await cdp.send(
+      'DOM.querySelector',
+      { nodeId: zipRoot.nodeId, selector: '#fileInput' },
+      session,
+    );
+    await cdp.send('DOM.setFileInputFiles', { files: [backupZip], nodeId: zipNode }, session);
+    await cdp.waitFor('Boolean(document.querySelector("#importDialog[open]"))', session, { label: '导入弹窗' });
+    await cdp.waitFor('document.querySelector("#importSummary").textContent.includes("篇日记")', session, {
+      label: '解析备份',
+    });
+    await cdp.evaluate('document.querySelector("#btnImportReplace").click()', session);
+    await cdp.waitFor('Boolean(document.querySelector("#confirmDialog[open]"))', session, { label: '覆盖确认' });
+    await cdp.evaluate('document.querySelector("#btnConfirmOk").click()', session);
+    await new Promise((done) => setTimeout(done, 1500));
+    const afterRoundTrip = await snapshot();
+    check(
+      '导出再覆盖导入：日记时间 / 记账 / 待办 完全一致',
+      JSON.stringify(beforeRoundTrip) === JSON.stringify(afterRoundTrip),
+      `${JSON.stringify(beforeRoundTrip)} vs ${JSON.stringify(afterRoundTrip)}`,
+    );
+  }
 
   // 导入备份（走真实的文件选择）
   await cdp.send('DOM.enable', {}, session);

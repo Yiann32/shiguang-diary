@@ -15,6 +15,8 @@
     timelineFilter: 'all',
     calendarMode: 'diary',
     activeBookId: '',
+    todoCollapsed: false,
+    lastAccountId: '',
     // 资金压力的三个估算值（本机保存，不随账本、不进备份）
     pressure: { salary: 0, otherIncome: 0, otherExpense: 0 },
   };

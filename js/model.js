@@ -1667,6 +1667,30 @@
     'todoGroups',
   ];
 
+  /** 「引用记账」插进日记的那一行（Markdown 引用块） */
+  function ledgerQuoteLine(item, options) {
+    const config = options || {};
+    if (!item) return '';
+    const categories = categoryIndex(config.categories);
+    const accounts = categoryIndex(config.accounts);
+    const category = categories.get(item.categoryId);
+    const account = accounts.get(item.accountId);
+    const toAccount = accounts.get(item.toAccountId);
+    const monthDay = toText(item.date).slice(5);
+    const head = [monthDay, toText(item.time)].filter(Boolean).join(' ');
+    const note = toText(item.note).trim();
+    if (normalizeLedgerType(item.type) === 'transfer') {
+      const route = [account ? account.name : '', toAccount ? toAccount.name : ''].filter(Boolean).join(' → ');
+      const main = `${head} 转账 ¥${formatMoney(item.amount)}`;
+      const tail = [route, note].filter(Boolean).join(' · ');
+      return `> ${tail ? `${main} · ${tail}` : main}`;
+    }
+    const label = category ? category.name : '未分类';
+    const sign = normalizeLedgerType(item.type) === 'income' ? '+' : '';
+    const main = `${head} ${label} ${sign}¥${formatMoney(item.amount)}`;
+    return `> ${note ? `${main} · ${note}` : main}`;
+  }
+
   function buildExportPayload(entries, options) {
     const config = options || {};
     const list = sortEntries(entries, 'asc');
@@ -1891,6 +1915,7 @@
     CATEGORY_COLORS,
     DEFAULT_EXPENSE_CATEGORIES,
     DEFAULT_INCOME_CATEGORIES,
+    EXPORT_COLLECTIONS,
     FREQUENCIES,
     LEDGER_TYPES,
     MONTH_LABELS,
@@ -1952,6 +1977,7 @@
     isCommissionSettled,
     isReceivableSettled,
     ledgerToCsv,
+    ledgerQuoteLine,
     ledgerTotals,
     ledgerTypeLabel,
     matchesQuery,

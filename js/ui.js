@@ -20,6 +20,7 @@
     chevronLeft: '<path d="M14.5 6l-6 6 6 6"/>',
     chevronRight: '<path d="M9.5 6l6 6-6 6"/>',
     chevronDown: '<path d="M6 9.5l6 6 6-6"/>',
+    chevronUp: '<path d="M6 14.5l6-6 6 6"/>',
     wallet: '<path d="M4 7.5h16v11H4z"/><path d="M4 10.5h16"/><path d="M15.5 14.2h2"/>',
     brush: '<path d="M5 4.5h9l4 4v11H5z"/><path d="M13.5 4.5V9H18"/><path d="M9.5 15.2l3.5-3.5 2 2-3.5 3.5-2.4.4z"/>',
     star: '<path d="M12 4.6l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.6-4.8 2.6.9-5.4L4.2 10.3l5.4-.8z"/>',

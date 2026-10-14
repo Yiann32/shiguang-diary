@@ -359,6 +359,20 @@
       /** 导入备份里的记账 / 待办数据（v3 备份才有） */
       async importCollections(payload, mode) {
         if (!payload) return;
+        // 备份里「真带了」哪几张表，只有这些才允许被覆盖 / 清空
+        const has = (key) => Array.isArray(payload[key]);
+        const TABLES = {
+          books: 'Books',
+          categories: 'Categories',
+          accounts: 'Accounts',
+          budgets: 'Budgets',
+          recurring: 'Recurring',
+          payables: 'Payables',
+          receivables: 'Receivables',
+          ledger: 'Ledger',
+          todos: 'Todos',
+          todoGroups: 'TodoGroups',
+        };
         const incomingBooks = (payload.books || []).map((item) => model.normalizeBook(item));
         const incomingCategories = (payload.categories || []).map((item) => model.normalizeCategory(item));
         const incomingAccounts = (payload.accounts || []).map((item) => model.normalizeAccount(item));
@@ -384,30 +398,21 @@
         };
 
         if (mode === 'replace') {
-          books = incomingBooks;
-          categories = incomingCategories;
-          accounts = incomingAccounts;
-          budgets = incomingBudgets;
-          recurring = incomingRecurring;
-          commissions = incomingCommissions;
-          receivables = incomingReceivables;
-          ledger = incomingLedger;
-          todos = incomingTodos;
-          todoGroups = incomingGroups;
-          activeBookId = books.length ? books[0].id : '';
-          for (const key of [
-            'Books',
-            'Categories',
-            'Accounts',
-            'Budgets',
-            'Recurring',
-            'Ledger',
-            'Payables',
-            'Receivables',
-            'Todos',
-            'TodoGroups',
-          ]) {
-            await call(`clear${key}`);
+          // 只覆盖「备份里真带了」的那几张表：导入一份只有日记的备份，
+          // 不能把现有的账本 / 待办给清空（以前的 bug）
+          if (has('books')) books = incomingBooks;
+          if (has('categories')) categories = incomingCategories;
+          if (has('accounts')) accounts = incomingAccounts;
+          if (has('budgets')) budgets = incomingBudgets;
+          if (has('recurring')) recurring = incomingRecurring;
+          if (has('payables')) commissions = incomingCommissions;
+          if (has('receivables')) receivables = incomingReceivables;
+          if (has('ledger')) ledger = incomingLedger;
+          if (has('todos')) todos = incomingTodos;
+          if (has('todoGroups')) todoGroups = incomingGroups;
+          if (has('books') && books.length) activeBookId = books[0].id;
+          for (const [key, table] of Object.entries(TABLES)) {
+            if (has(key)) await call(`clear${table}`);
           }
         } else {
           books = merge(books, incomingBooks);

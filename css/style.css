@@ -868,6 +868,11 @@ body {
   letter-spacing: 0.03em;
 }
 
+/* 同一张卡里接第二块（首页的支出构成 / 收入构成） */
+.section__title--gap {
+  margin-top: 18px;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1449,6 +1454,21 @@ body {
   display: none;
 }
 
+/* 待办卡片右上角的折叠箭头 */
+.card-panel__fold {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.card-panel.is-folded {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.card-panel.is-folded .card-panel__head {
+  margin-bottom: 0;
+}
+
 .card-panel__open {
   display: inline-flex;
   align-items: center;
@@ -1880,6 +1900,7 @@ body[data-tab='money'] .fab--money {
 }
 
 .budgetbar__track {
+  display: flex;
   height: 6px;
   margin-top: 6px;
   border-radius: 999px;
@@ -1888,6 +1909,9 @@ body[data-tab='money'] .fab--money {
 }
 
 .budgetbar__fill {
+  /* span 默认是行内元素，会忽略 width/height —— 必须显式块级，否则进度条永远是空的 */
+  display: block;
+  flex: none;
   height: 100%;
   border-radius: 999px;
   background: var(--accent);
@@ -2670,6 +2694,7 @@ button.caldate:hover .caldate__main {
 }
 
 .lstats__track {
+  display: flex;
   height: 6px;
   margin-top: 5px;
   border-radius: 999px;
@@ -2678,6 +2703,8 @@ button.caldate:hover .caldate__main {
 }
 
 .lstats__fill {
+  display: block;
+  flex: none;
   height: 100%;
   border-radius: 999px;
 }

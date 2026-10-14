@@ -69,17 +69,20 @@
           <section class="card-panel" id="todoCard">
             <div class="card-panel__head">
               <button type="button" class="card-panel__open" id="btnTodoMore" aria-label="查看全部待办">
-                <span class="card-panel__title">待办</span>
+                <span class="card-panel__title" id="todoCardTitle">待办</span>
                 <span class="card-panel__count" id="todoCount"></span>
                 <span class="card-panel__chevron" aria-hidden="true"></span>
               </button>
+              <button type="button" class="iconbtn iconbtn--sm card-panel__fold" id="btnTodoFold" aria-label="收起待办" title="收起"></button>
             </div>
-            <div class="todo__add">
-              <input type="text" id="todoInput" class="input" placeholder="要做的事，回车添加" maxlength="120" />
-              <button type="button" class="btn btn--primary btn--sm" id="btnTodoAdd">添加</button>
+            <div id="todoCardBody">
+              <div class="todo__add">
+                <input type="text" id="todoInput" class="input" placeholder="要做的事，回车添加" maxlength="120" />
+                <button type="button" class="btn btn--primary btn--sm" id="btnTodoAdd">添加</button>
+              </div>
+              <ul class="todo__list" id="todoList"></ul>
+              <p class="hint" id="todoEmpty">还没有待办</p>
             </div>
-            <ul class="todo__list" id="todoList"></ul>
-            <p class="hint" id="todoEmpty">还没有待办</p>
           </section>
 
           <div class="timeline" id="timeline"></div>
@@ -338,6 +341,10 @@
               <span class="inforow__icon" id="tagRowIcon" aria-hidden="true"></span>
               <span class="inforow__label">标签</span>
               <span class="inforow__value" id="tagSummary">无</span>
+            </button>
+            <button type="button" class="inforow inforow--tag" id="btnQuoteLedger">
+              <span class="inforow__icon" id="quoteRowIcon" aria-hidden="true"></span>
+              <span class="inforow__label">引用记账</span>
             </button>
             <input type="text" id="fTags" hidden />
             <div class="inforow inforow--static mobile-only">

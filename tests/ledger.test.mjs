@@ -1079,3 +1079,101 @@ test('待收款项 ↔ 待办联动：建、改期、清空、收齐、删除', 
 function todayKeyish() {
   return model.toDateKey(Date.now());
 }
+
+/* -------------------------------------------------- 引用记账 / 备份往返 */
+
+test('引用记账：支出 / 收入 / 转账 / 无备注四种文案', () => {
+  const categories = [{ id: 'c1', name: '餐饮' }, { id: 'c2', name: '工资' }];
+  const accounts = [{ id: 'a1', name: '现金' }, { id: 'a2', name: '招行卡' }];
+
+  const expense = model.ledgerQuoteLine(
+    model.normalizeLedger({ type: 'expense', amount: 25, date: '2026-09-26', time: '21:10', categoryId: 'c1', note: '楼下的小面馆' }),
+    { categories, accounts },
+  );
+  assert.equal(expense, '> 09-26 21:10 餐饮 ¥25 · 楼下的小面馆');
+
+  const income = model.ledgerQuoteLine(
+    model.normalizeLedger({ type: 'income', amount: 5000, date: '2026-09-26', time: '09:00', categoryId: 'c2' }),
+    { categories, accounts },
+  );
+  assert.equal(income, '> 09-26 09:00 工资 +¥5,000');
+
+  const transfer = model.ledgerQuoteLine(
+    model.normalizeLedger({ type: 'transfer', amount: 500, date: '2026-09-26', time: '18:30', accountId: 'a1', toAccountId: 'a2' }),
+    { categories, accounts },
+  );
+  assert.equal(transfer, '> 09-26 18:30 转账 ¥500 · 现金 → 招行卡');
+
+  const noNote = model.ledgerQuoteLine(
+    model.normalizeLedger({ type: 'expense', amount: 8, date: '2026-09-26', time: '07:40', categoryId: 'c1' }),
+    { categories, accounts },
+  );
+  assert.equal(noNote, '> 09-26 07:40 餐饮 ¥8');
+});
+
+test('备份往返：自家 JSON 保住日记时间与记账 / 待办', async () => {
+  const payload = model.buildExportPayload(
+    [{ id: 'e1', date: '2026-09-26', time: '21:10', content: '测试', createdAt: Date.parse('2026-09-26T21:10:00') }],
+    {
+      books: [{ id: 'b1', name: '日常账本', createdAt: 1 }],
+      categories: [{ id: 'c1', bookId: 'b1', kind: 'expense', name: '餐饮' }],
+      ledger: [{ id: 'l1', bookId: 'b1', type: 'expense', amount: 25, date: '2026-09-26', time: '09:05' }],
+      todos: [{ id: 't1', text: '买牛奶', dueTime: '14:30' }],
+    },
+  );
+  const out = await importer.parseBackup({
+    bytes: new TextEncoder().encode(JSON.stringify(payload)),
+    filename: '备份.json',
+  });
+  assert.equal(out.entries[0].time, '21:10', '日记的具体时间不能被冲成 00:00');
+  assert.equal(out.ledger.length, 1);
+  assert.equal(out.ledger[0].time, '09:05');
+  assert.equal(out.todos.length, 1);
+  assert.equal(out.todos[0].dueTime, '14:30');
+  assert.equal(out.categories.length, 1);
+});
+
+test('备份往返：完整备份 ZIP 同样保住时间与集合', async () => {
+  const payload = model.buildExportPayload(
+    [{ id: 'e1', date: '2026-09-26', time: '21:10', content: '测试', createdAt: Date.parse('2026-09-26T21:10:00') }],
+    {
+      books: [{ id: 'b1', name: '日常账本', createdAt: 1 }],
+      ledger: [{ id: 'l1', bookId: 'b1', type: 'expense', amount: 25, date: '2026-09-26', time: '09:05' }],
+      todos: [{ id: 't1', text: '买牛奶', dueTime: '14:30' }],
+      payables: [{ id: 'p1', bookId: 'b1', title: '双人半身', total: 2000 }],
+      receivables: [{ id: 'r1', bookId: 'b1', client: '甲方', amount: 800 }],
+    },
+  );
+  const zipBytes = await Diary.zip.createZip([{ name: 'entries.json', data: JSON.stringify(payload) }]);
+  const out = await importer.parseBackup({ bytes: zipBytes, filename: '完整备份.zip' });
+  assert.equal(out.entries[0].time, '21:10');
+  assert.equal(out.ledger.length, 1);
+  assert.equal(out.todos.length, 1);
+  assert.equal(out.books.length, 1);
+  assert.equal(out.payables.length, 1);
+  assert.equal(out.receivables.length, 1);
+});
+
+test('覆盖导入：备份里没有的表不会被清空', async () => {
+  const store = await memoryStore();
+  await store.addLedger({ type: 'expense', amount: 30, date: '2026-09-26' });
+  await store.addTodo('原来的待办');
+  assert.equal(store.ledgerList().length, 1);
+
+  // 一份只有日记的备份（v2 老格式）
+  await store.importResult({ entries: [{ id: 'e9', date: '2026-09-26', content: '导入的日记' }] }, 'replace');
+  assert.equal(store.list().length, 1);
+  assert.equal(store.ledgerList().length, 1, '记账不该被清掉');
+  assert.equal(store.todoList().length, 1, '待办不该被清掉');
+
+  // 带了记账的备份才整表替换
+  await store.importResult(
+    {
+      entries: [{ id: 'e9', date: '2026-09-26', content: '导入的日记' }],
+      ledger: [{ id: 'l9', bookId: store.activeBookId, type: 'income', amount: 99, date: '2026-09-27' }],
+    },
+    'replace',
+  );
+  assert.equal(store.ledgerList().length, 1);
+  assert.equal(store.ledgerList()[0].amount, 99);
+});

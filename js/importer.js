@@ -173,6 +173,9 @@
 
     const dateValue = pick(map, DATE_KEYS);
     const parsedDate = normalizeDate(dateValue) || normalizeDate(pick(map, ['timeStamp', 'timestamp', 'createTime', 'createdAt']));
+    // 只给了日期、没给时间的第三方记录：别再硬写成 00:00，
+    // 能从创建/更新时间戳里补出时分就补（自家备份不会走到这里，见 readOwnBackup）
+    const hasExplicitTime = Boolean(pick(map, ['time', 'hour', 'hhmm', 'showtime']));
 
     const tags = Diary.model.normalizeTags(normalizeTagValue(pick(map, TAG_KEYS)));
     const labIds = pick(map, ['labids', 'labid', 'lab_ids']);
@@ -195,7 +198,12 @@
     entry.pinned = Boolean(pick(map, ['pinned', 'sticky', 'top', 'istop']));
     if (parsedDate) {
       entry.date = parsedDate.date;
-      entry.time = parsedDate.time;
+      if (hasExplicitTime || parsedDate.time !== '00:00') {
+        entry.time = parsedDate.time;
+      } else {
+        const stamp = Number(pick(map, ['createdat', 'createtime', 'updatedat', 'updatetime', 'mtime', 'ctime'])) || 0;
+        entry.time = stamp ? Diary.model.toTimeKey(stamp) : parsedDate.time;
+      }
     }
     entry.createdAt = timestamp;
     entry.updatedAt = Math.max(timestamp, Number(pick(map, ['updatedat', 'updatetime', 'mtimes'])) || timestamp);
@@ -422,6 +430,34 @@
 
   /* --------------------------------------------------------- 通用 ZIP */
 
+  /**
+   * 是不是本应用导出的备份。
+   * 自家 payload 必须走自家解析：通用字段映射只认到「日期」，
+   * 会把日记的具体时间冲成 00:00，也读不出 v3 的记账 / 待办集合。
+   */
+  function isOwnBackup(json) {
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
+    if (!Array.isArray(json.entries)) return false;
+    if (json.format === 'diary-json') return true;
+    return Boolean(json.app && /日记/.test(toText(json.app)));
+  }
+
+  /** 按自家格式读：条目走 model.parseImport（时间 / 创建时间 / 标签原样），集合一起带回 */
+  function readOwnBackup(text) {
+    const parsed = Diary.model.parseImport(text);
+    const payload = {
+      entries: parsed.entries,
+      media: [],
+      warnings: [],
+      meta: { app: '拾光日记备份', version: parsed.version },
+      source: 'own',
+    };
+    for (const key of Diary.model.EXPORT_COLLECTIONS || []) {
+      if (Array.isArray(parsed[key])) payload[key] = parsed[key];
+    }
+    return payload;
+  }
+
   async function readZipBackup(bytes, options) {
     const config = options || {};
     const list = Diary.zip.listEntries(bytes);
@@ -465,17 +501,25 @@
 
     const entries = [];
     const media = [];
+    const collections = {};
 
     // 第二遍：解析文字内容，并把引用到的图片挂到条目上
     for (const file of jsonFiles) {
       const json = parseJsonLike(file.text);
       if (!json) continue;
-      const records = recordsFromJson(json);
-      const payload = typeof json === 'object' && Array.isArray(json.entries) ? json.entries : null;
+      // 自家备份：走自家解析，日记时间与记账 / 待办等集合一起还原
+      const own = isOwnBackup(json) ? readOwnBackup(file.text) : null;
+      const rawEntries = Array.isArray(json && json.entries) ? json.entries : null;
+      const records = own ? own.entries : recordsFromJson(json);
       records.forEach((entry, position) => {
-        attachZipMedia(entry, payload ? payload[position] : null, mediaByName, media);
+        attachZipMedia(entry, rawEntries ? rawEntries[position] : null, mediaByName, media);
         entries.push(entry);
       });
+      if (own) {
+        for (const key of Diary.model.EXPORT_COLLECTIONS || []) {
+          if (Array.isArray(own[key])) collections[key] = (collections[key] || []).concat(own[key]);
+        }
+      }
     }
 
     for (const file of textFiles) {
@@ -498,7 +542,15 @@
       });
     }
 
-    return { entries, media, warnings, meta: { app: 'ZIP 备份' }, source: 'zip' };
+    return {
+      entries,
+      media,
+      warnings,
+      meta: { app: 'ZIP 备份' },
+      source: 'zip',
+      // 自家完整备份里的记账 / 待办 / 约稿等集合
+      ...collections,
+    };
   }
 
   function normalizeName(name) {
@@ -564,11 +616,14 @@
       return readZipBackup(bytes, config);
     }
     if (info.kind === 'json') {
-      const data = parseJsonLike(textDecoder.decode(bytes));
+      const text = textDecoder.decode(bytes);
+      const data = parseJsonLike(text);
+      // 自家 JSON 备份：时间和记账一起还原
+      if (isOwnBackup(data)) return readOwnBackup(text);
       const entries = recordsFromJson(data);
       if (!entries.length) throw new Error('JSON 里没有找到日记数据');
       const payload = { entries, media: [], warnings: [], meta: { app: 'JSON 备份' }, source: 'json' };
-      for (const key of ['books', 'categories', 'accounts', 'budgets', 'recurring', 'ledger', 'todos', 'todoGroups']) {
+      for (const key of Diary.model.EXPORT_COLLECTIONS || []) {
         if (Array.isArray(data && data[key])) payload[key] = data[key];
       }
       return payload;

@@ -41,6 +41,7 @@
       commissionQuery: '',
       hideClosed: false,
       todoRange: 'week',
+      todoCollapsed: Boolean(settings.todoCollapsed),
       subpage: null,
       pendingImport: null,
       installPrompt: null,
@@ -84,13 +85,18 @@
       btnPickDate: $('#btnPickDate'),
       tagSummary: $('#tagSummary'),
       btnEditTags: $('#btnEditTags'),
+      btnQuoteLedger: $('#btnQuoteLedger'),
+      quoteRowIcon: $('#quoteRowIcon'),
       todoList: $('#todoList'),
       todoInput: $('#todoInput'),
       todoEmpty: $('#todoEmpty'),
       btnTodoAdd: $('#btnTodoAdd'),
       todoCard: $('#todoCard'),
+      todoCardTitle: $('#todoCardTitle'),
       todoCount: $('#todoCount'),
       btnTodoMore: $('#btnTodoMore'),
+      btnTodoFold: $('#btnTodoFold'),
+      todoCardBody: $('#todoCardBody'),
       todoPage: $('#todoPage'),
       todoPageBody: $('#todoPageBody'),
       todoPageInput: $('#todoPageInput'),
@@ -214,6 +220,7 @@
         btnKeypadClose: ['close', 20],
         statsRowIcon: ['chart', 20],
         tagRowIcon: ['tag', 18],
+        quoteRowIcon: ['wallet', 18],
         wordRowIcon: ['lines', 18],
         cardPinIcon: ['star', 18],
         cardDeleteIcon: ['trash', 18],
@@ -1052,6 +1059,59 @@
       dom.tagSummary.textContent = tags.length ? tags.map((tag) => `#${tag}`).join('  ') : '无';
     }
 
+    /** 引用一条记账流水：插到正文光标处（预览态先切回编辑） */
+    async function openLedgerQuote() {
+      const items = store.ledgerList().slice(0, 30);
+      if (!items.length) {
+        toast('还没有记账可以引用', { tone: 'error' });
+        return;
+      }
+      const categories = store.categories();
+      const accounts = store.accounts();
+      const values = await openForm({
+        title: '引用一条记账',
+        okText: '插入',
+        fields: [
+          {
+            type: 'select',
+            key: 'ledgerId',
+            label: '最近 30 笔',
+            value: items[0].id,
+            options: items.map((item) => ({
+              value: item.id,
+              label: model.ledgerQuoteLine(item, { categories, accounts }).replace(/^>\s*/, ''),
+            })),
+          },
+          { type: 'note', text: '插入的是 Markdown 引用块，会跟着这篇日记一起保存。' },
+        ],
+      });
+      if (!values || !values.ledgerId) return;
+      const picked = items.find((item) => item.id === values.ledgerId);
+      if (!picked) return;
+      insertQuoteLine(model.ledgerQuoteLine(picked, { categories, accounts }));
+    }
+
+    function insertQuoteLine(line) {
+      if (!line) return;
+      if (state.preview) setPreview(false);
+      const textarea = dom.fContent;
+      const start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : textarea.value.length;
+      const end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+      const before = textarea.value.slice(0, start);
+      const needsBreak = before && !before.endsWith('\n') ? '\n' : '';
+      const inserted = `${needsBreak}${line}\n`;
+      textarea.value = `${before}${inserted}${textarea.value.slice(end)}`;
+      const caret = start + inserted.length;
+      focusField('content');
+      try {
+        textarea.setSelectionRange(caret, caret);
+      } catch (error) {
+        /* 某些环境不支持设置选区，忽略 */
+      }
+      markDirty();
+      setStatus('已插入引用');
+    }
+
     /* ------------------------------------------------------ 通用表单弹窗 */
 
     let formContext = null;
@@ -1260,7 +1320,24 @@
       if (!dom.todoList) return;
       const pending = store.todoList().filter((todo) => !todo.done);
       const stats = store.todoStats();
-      dom.todoCount.textContent = stats.pending ? String(stats.pending) : '';
+      const collapsed = Boolean(state.todoCollapsed);
+      dom.todoCard.classList.toggle('is-folded', collapsed);
+      dom.todoCardBody.hidden = collapsed;
+      const foldIcon = collapsed ? 'chevronDown' : 'chevronUp';
+      if (dom.btnTodoFold.querySelector('svg') === null || dom.btnTodoFold.dataset.icon !== foldIcon) {
+        dom.btnTodoFold.textContent = '';
+        dom.btnTodoFold.append(icon(foldIcon, 16));
+        dom.btnTodoFold.dataset.icon = foldIcon;
+      }
+      dom.btnTodoFold.setAttribute('aria-label', collapsed ? '展开待办' : '收起待办');
+      dom.btnTodoFold.title = collapsed ? '展开' : '收起';
+      // 收起时把条数写进标题（省掉一行），展开时数字单独显示成小胶囊
+      dom.todoCount.textContent = collapsed ? '' : stats.pending ? String(stats.pending) : '';
+      dom.todoCardTitle.textContent = collapsed
+        ? stats.pending
+          ? `待办 · ${stats.pending} 条未完成`
+          : '待办 · 都做完了'
+        : '待办';
       dom.todoEmpty.hidden = pending.length > 0;
       dom.todoEmpty.textContent = stats.pending === 0 && stats.done > 0 ? '待办都做完了' : '还没有待办';
       dom.todoList.textContent = '';
@@ -1508,7 +1585,11 @@
             el('div', { class: 'lstats__track' }, [
               el('span', {
                 class: 'lstats__fill',
-                style: { width: `${Math.round(row.ratio * 100)}%`, background: 'var(--accent)' },
+                style: {
+                  width: `${Math.round(row.ratio * 100)}%`,
+                  minWidth: row.count > 0 ? '3px' : '0',
+                  background: 'var(--accent)',
+                },
               }),
             ]),
           ]),
@@ -1693,6 +1774,7 @@
 
     function budgetBarNode(progress) {
       const ratio = Math.max(0, Math.min(1, progress.ratio));
+      const percent = Math.round(ratio * 100);
       return el('div', { class: `budgetbar${progress.over ? ' is-over' : ''}` }, [
         el('div', { class: 'budgetbar__head' }, [
           el('span', { text: `本月预算 ¥${model.formatMoney(progress.amount)}` }),
@@ -1704,7 +1786,11 @@
           }),
         ]),
         el('div', { class: 'budgetbar__track' }, [
-          el('span', { class: 'budgetbar__fill', style: { width: `${Math.round(ratio * 100)}%` } }),
+          el('span', {
+            class: 'budgetbar__fill',
+            // 花了一点点也要看得见，所以给个最小宽度
+            style: { width: `${percent}%`, minWidth: percent > 0 ? '3px' : '0' },
+          }),
         ]),
       ]);
     }
@@ -1822,8 +1908,16 @@
       );
 
       const expenseRows = store.categoryStats('expense', year, month);
+      const incomeRows = store.categoryStats('income', year, month);
       dom.moneyChart.textContent = '';
-      dom.moneyChart.append(el('h3', { class: 'section__title', text: '本月支出构成' }), donutBlock(expenseRows, '这个月还没有支出'));
+      dom.moneyChart.append(
+        el('h3', { class: 'section__title', text: '本月支出构成' }),
+        donutBlock(expenseRows, '这个月还没有支出'),
+      );
+      dom.moneyChart.append(
+        el('h3', { class: 'section__title section__title--gap', text: '本月收入构成' }),
+        donutBlock(incomeRows, '这个月还没有收入'),
+      );
 
       dom.moneyRank.textContent = '';
       dom.moneyRank.append(el('h3', { class: 'section__title', text: '分类排行' }));
@@ -2506,7 +2600,11 @@
             el('div', { class: 'lstats__track' }, [
               el('span', {
                 class: 'lstats__fill',
-                style: { width: `${Math.round((row.amount / max) * 100)}%`, background: row.color },
+                style: {
+                  width: `${Math.round((row.amount / max) * 100)}%`,
+                  minWidth: row.amount > 0 ? '3px' : '0',
+                  background: row.color,
+                },
               }),
             ]),
           ]),
@@ -2552,11 +2650,11 @@
       );
       body.append(categoryDetailPanel('支出明细', rows, '这段时间没有支出记录'));
 
-      // 收入侧：本月（或本年）的钱是从哪来的
+      // 收入侧：和支出侧完全对称（环形图 + 明细列表）
       const incomeRows = store.categoryStats('income', year, yearMode ? undefined : month);
       body.append(
         el('div', { class: 'panel' }, [
-          el('h3', { class: 'section__title', text: yearMode ? `${year} 年收入构成` : `${month + 1} 月收入构成` }),
+          el('h3', { class: 'section__title', text: '收入分类' }),
           donutBlock(incomeRows, '这段时间没有收入记录'),
           incomeRows.length
             ? el('p', {
@@ -3048,7 +3146,9 @@
         date: existing ? existing.date : config.date || fallbackDate || today(),
         time: existing ? existing.time : model.toTimeKey(Date.now()),
         categoryId: existing ? existing.categoryId : '',
-        accountId: existing ? existing.accountId : (accounts[0] || {}).id || '',
+        accountId: existing
+          ? existing.accountId
+          : (accounts.find((item) => item.id === settings.lastAccountId) || accounts[0] || {}).id || '',
         toAccountId: existing ? existing.toAccountId : ((accounts[1] || accounts[0] || {}).id || ''),
         note: existing ? existing.note : '',
         amount: existing ? String(existing.amount) : '',
@@ -3111,11 +3211,13 @@
 
     function renderKeypadChips() {
       const pad = state.keypad;
+      const account = store.accountById(pad.accountId);
       dom.keypadChips.textContent = '';
       dom.keypadChips.append(
         el('button', {
           type: 'button',
           class: 'kchip',
+          dataset: { chip: 'date' },
           text: model.dateLabel(pad.date, today()),
           onclick: async () => {
             const values = await openForm({
@@ -3130,7 +3232,15 @@
         }),
         el('button', {
           type: 'button',
+          class: 'kchip',
+          dataset: { chip: 'account' },
+          text: account ? account.name : '账户',
+          onclick: () => openAccountPicker(),
+        }),
+        el('button', {
+          type: 'button',
           class: `kchip${pad.note ? ' is-on' : ''}`,
+          dataset: { chip: 'note' },
           text: pad.note || '备注',
           onclick: async () => {
             const values = await openForm({
@@ -3191,6 +3301,34 @@
           renderKeypad();
         }),
       );
+    }
+
+    /** 切换这一笔用哪个账户（记住上次用的） */
+    async function openAccountPicker() {
+      const pad = state.keypad;
+      if (!pad) return;
+      const accounts = store.accounts();
+      if (!accounts.length) {
+        toast('先去「账本设置」建一个账户', { tone: 'error' });
+        return;
+      }
+      const values = await openForm({
+        title: pad.type === 'transfer' ? '从哪个账户转出' : '这一笔用哪个账户',
+        okText: '确定',
+        fields: [
+          {
+            type: 'select',
+            key: 'accountId',
+            label: '账户',
+            value: pad.accountId || accounts[0].id,
+            options: accounts.map((item) => ({ value: item.id, label: item.name })),
+          },
+        ],
+      });
+      if (!values || !values.accountId) return;
+      state.keypad.accountId = values.accountId;
+      settings = Diary.settings.saveSettings({ lastAccountId: values.accountId });
+      renderKeypad();
     }
 
     function renderKeypadPad() {
@@ -3267,6 +3405,7 @@
         note: pad.note,
       };
       const editing = pad.id;
+      settings = Diary.settings.saveSettings({ lastAccountId: pad.accountId });
       if (editing) await store.updateLedger(editing, payload);
       else await store.addLedger(payload);
       closeKeypad();
@@ -3613,6 +3752,11 @@
         void submitTodo('card');
       });
       dom.btnTodoMore.addEventListener('click', () => openSubpage('todo'));
+      dom.btnTodoFold.addEventListener('click', () => {
+        state.todoCollapsed = !state.todoCollapsed;
+        settings = Diary.settings.saveSettings({ todoCollapsed: state.todoCollapsed });
+        renderTodoCard();
+      });
       dom.btnTodoBack.addEventListener('click', () => closeSubpage());
       dom.btnTodoPageAdd.addEventListener('click', () => void submitTodo('page'));
       dom.todoPageInput.addEventListener('keydown', (event) => {
@@ -3699,6 +3843,7 @@
         openDialog(dom.tagDialog);
         setTimeout(() => dom.tagDialogInput.focus(), 60);
       });
+      dom.btnQuoteLedger.addEventListener('click', () => void openLedgerQuote());
       dom.btnTagSave.addEventListener('click', () => {
         dom.fTags.value = dom.tagDialogInput.value;
         closeDialog(dom.tagDialog);
