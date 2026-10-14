@@ -89,6 +89,7 @@ test('createEntry 生成完整的空条目', () => {
     tags: [],
     pinned: false,
     media: [],
+    quotes: [],
     source: '',
     createdAt: Date.parse('2026-09-26T21:05:00'),
     updatedAt: Date.parse('2026-09-26T21:05:00'),

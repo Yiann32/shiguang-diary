@@ -74,6 +74,7 @@
       fContent: $('#fContent'),
       fTags: $('#fTags'),
       editorMedia: $('#editorMedia'),
+      editorQuotes: $('#editorQuotes'),
       preview: $('#preview'),
       status: $('#saveStatus'),
       editorMeta: $('#editorMeta'),
@@ -780,9 +781,10 @@
         renderDayCommissions(date);
         return;
       }
-      const items = model.sortEntries(
+      // 日历下方当天列表：时间最新的排最上面（收藏不置顶）
+      const items = model.sortEntriesByTime(
         state.entries.filter((entry) => entry.date === date),
-        'asc',
+        'desc',
       );
       if (!items.length) {
         dom.dayList.append(
@@ -1005,6 +1007,7 @@
       dom.btnPin.classList.toggle('is-on', entry.pinned);
       renderEditorMeta(entry);
       renderEditorMedia(entry);
+      renderEditorQuotes(entry);
       renderPreview();
       renderEditorTodos();
       setStatus('');
@@ -1059,7 +1062,7 @@
       dom.tagSummary.textContent = tags.length ? tags.map((tag) => `#${tag}`).join('  ') : '无';
     }
 
-    /** 引用一条记账流水：插到正文光标处（预览态先切回编辑） */
+    /** 引用一条记账流水：追加成一个只读引用块（不再往正文插文本） */
     async function openLedgerQuote() {
       const items = store.ledgerList().slice(0, 30);
       if (!items.length) {
@@ -1070,7 +1073,7 @@
       const accounts = store.accounts();
       const values = await openForm({
         title: '引用一条记账',
-        okText: '插入',
+        okText: '添加',
         fields: [
           {
             type: 'select',
@@ -1082,34 +1085,85 @@
               label: model.ledgerQuoteLine(item, { categories, accounts }).replace(/^>\s*/, ''),
             })),
           },
-          { type: 'note', text: '插入的是 Markdown 引用块，会跟着这篇日记一起保存。' },
+          { type: 'note', text: '引用会作为只读的一行放在正文下方，按退格或点行尾的 × 可以整条删掉。' },
         ],
       });
       if (!values || !values.ledgerId) return;
       const picked = items.find((item) => item.id === values.ledgerId);
       if (!picked) return;
-      insertQuoteLine(model.ledgerQuoteLine(picked, { categories, accounts }));
+      addEntryQuote(model.quoteFromLedger(picked, { categories, accounts }));
     }
 
-    function insertQuoteLine(line) {
-      if (!line) return;
-      if (state.preview) setPreview(false);
-      const textarea = dom.fContent;
-      const start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : textarea.value.length;
-      const end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
-      const before = textarea.value.slice(0, start);
-      const needsBreak = before && !before.endsWith('\n') ? '\n' : '';
-      const inserted = `${needsBreak}${line}\n`;
-      textarea.value = `${before}${inserted}${textarea.value.slice(end)}`;
-      const caret = start + inserted.length;
-      focusField('content');
-      try {
-        textarea.setSelectionRange(caret, caret);
-      } catch (error) {
-        /* 某些环境不支持设置选区，忽略 */
+    function entryQuotes(entry) {
+      const target = entry && typeof entry === 'object' ? entry : currentEntry();
+      return (target && Array.isArray(target.quotes) ? target.quotes : []).slice();
+    }
+
+    /** 引用块的只读渲染（编辑器与预览共用同一套结构） */
+    function quoteChipNode(quote, options) {
+      const config = options || {};
+      const head = model.quoteHead(quote);
+      const meta = [head, quote.note].filter(Boolean).join(' · ');
+      const node = el('div', { class: `quotechip${config.static ? ' quotechip--static' : ''}` }, [
+        el('span', { class: 'quotechip__main' }, [
+          el('span', { class: 'quotechip__label', text: quote.label }),
+          quote.route ? el('span', { class: 'quotechip__route', text: ` · ${quote.route}` }) : null,
+        ]),
+        meta ? el('span', { class: 'quotechip__meta', text: meta }) : null,
+      ]);
+      return node;
+    }
+
+    function renderEditorQuotes(entry) {
+      const container = dom.editorQuotes;
+      if (!container) return;
+      const quotes = entryQuotes(entry);
+      container.textContent = '';
+      container.hidden = !quotes.length;
+      for (const quote of quotes) {
+        const node = quoteChipNode(quote);
+        node.tabIndex = 0;
+        node.dataset.quote = quote.id;
+        node.setAttribute('aria-label', `引用：${quote.label}`);
+        node.addEventListener('keydown', (event) => {
+          if (event.key !== 'Backspace' && event.key !== 'Delete') return;
+          event.preventDefault();
+          removeEntryQuote(quote.id);
+        });
+        node.append(
+          el('button', {
+            type: 'button',
+            class: 'quotechip__del',
+            text: '×',
+            'aria-label': '删除这条引用',
+            onclick: (event) => {
+              event.stopPropagation();
+              removeEntryQuote(quote.id);
+            },
+          }),
+        );
+        container.append(node);
       }
+    }
+
+    function addEntryQuote(quote) {
+      const entry = currentEntry();
+      if (!entry || !quote) return;
+      entry.quotes = [...entryQuotes(entry), quote].slice(0, 50);
+      renderEditorQuotes(entry);
+      renderPreview();
       markDirty();
-      setStatus('已插入引用');
+      setStatus('已添加引用');
+    }
+
+    function removeEntryQuote(quoteId) {
+      const entry = currentEntry();
+      if (!entry) return;
+      entry.quotes = entryQuotes(entry).filter((item) => item.id !== quoteId);
+      renderEditorQuotes(entry);
+      renderPreview();
+      markDirty();
+      setStatus('已删除引用');
     }
 
     /* ------------------------------------------------------ 通用表单弹窗 */
@@ -1580,7 +1634,8 @@
           el('div', { class: 'lstats__row' }, [
             el('div', { class: 'lstats__head' }, [
               el('span', { class: 'lstats__name', text: row.name }),
-              el('span', { class: 'lstats__value', text: `完成 ${row.count} 次` }),
+              // 只写 3/5：本档完成数 /（本档完成 + 当前未完成）
+              el('span', { class: 'lstats__value', text: `${row.count}/${row.count + row.pending}` }),
             ]),
             el('div', { class: 'lstats__track' }, [
               el('span', {
@@ -3423,9 +3478,13 @@
 
     function renderPreview() {
       const text = dom.fContent.value.trim();
-      dom.preview.innerHTML = text
+      const body = text
         ? model.renderMarkdown(text)
         : '<p class="preview__empty">还没有内容，切回编辑写点什么吧。</p>';
+      const quotes = entryQuotes();
+      dom.preview.innerHTML = body;
+      // 引用块排在正文之后（和编辑区顺序一致）
+      for (const quote of quotes) dom.preview.append(quoteChipNode(quote, { static: true }));
     }
 
     function setStatus(text) {

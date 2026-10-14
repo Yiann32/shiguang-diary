@@ -325,8 +325,11 @@ test('待办：打卡式分组完成统计（近 7 天 / 本月 / 全部）', ()
   ];
   const all = model.todoGroupStats(todos, groups, { range: 'all', today: '2026-10-08' });
   assert.equal(all.total, 5);
-  assert.deepEqual(all.rows[0], { groupId: 'g1', name: '工作', count: 3, ratio: 1 });
+  // 完成率 = 本档完成 ÷（本档完成 + 当前未完成）：工作 3 完成、0 未完成 → 3/3
+  assert.deepEqual(all.rows[0], { groupId: 'g1', name: '工作', count: 3, pending: 0, doneInRange: 3, ratio: 1 });
   assert.equal(all.rows.find((row) => row.groupId === 'g2').count, 1);
+  assert.equal(all.rows.find((row) => row.groupId === '').pending, 1, '默认清单里那条没完成的要算进分母');
+  assert.equal(all.rows.find((row) => row.groupId === '').ratio, 0.5);
   assert.equal(all.rows.find((row) => row.groupId === '').count, 1);
 
   const week = model.todoGroupStats(todos, groups, { range: 'week', today: '2026-10-08' });
@@ -1176,4 +1179,124 @@ test('覆盖导入：备份里没有的表不会被清空', async () => {
   );
   assert.equal(store.ledgerList().length, 1);
   assert.equal(store.ledgerList()[0].amount, 99);
+});
+
+/* ------------------------------------------------ 引用块 / 当天排序 */
+
+test('引用记账：三种类型都能生成只读快照', () => {
+  const categories = [{ id: 'c1', name: '餐饮' }, { id: 'c2', name: '工资' }];
+  const accounts = [{ id: 'a1', name: '现金' }, { id: 'a2', name: '招行卡' }];
+  const opts = { categories, accounts };
+
+  const expense = model.quoteFromLedger(
+    model.normalizeLedger({ id: 'l1', type: 'expense', amount: 25, date: '2026-09-26', time: '21:10', categoryId: 'c1', note: '楼下的小面馆' }),
+    opts,
+  );
+  assert.equal(expense.ledgerId, 'l1');
+  assert.equal(expense.label, '餐饮 ¥25');
+  assert.equal(expense.route, '');
+  assert.equal(expense.note, '楼下的小面馆');
+  assert.ok(expense.id);
+
+  const income = model.quoteFromLedger(
+    model.normalizeLedger({ type: 'income', amount: 5000, date: '2026-09-26', time: '09:00', categoryId: 'c2' }),
+    opts,
+  );
+  assert.equal(income.label, '工资 +¥5,000');
+
+  const transfer = model.quoteFromLedger(
+    model.normalizeLedger({ type: 'transfer', amount: 500, date: '2026-09-26', time: '18:30', accountId: 'a1', toAccountId: 'a2' }),
+    opts,
+  );
+  assert.equal(transfer.label, '转账 ¥500');
+  assert.equal(transfer.route, '现金 → 招行卡');
+
+  // 快照不跟着流水变：改流水不影响已经生成的引用
+  const source = model.normalizeLedger({ type: 'expense', amount: 25, date: '2026-09-26', categoryId: 'c1' });
+  const snapshot = model.quoteFromLedger(source, opts);
+  source.amount = 999;
+  assert.equal(snapshot.label, '餐饮 ¥25');
+});
+
+test('引用记账：Markdown 行与编辑器两行文案', () => {
+  const quote = model.normalizeQuote({
+    label: '餐饮 ¥25',
+    date: '2026-09-26',
+    time: '21:10',
+    note: '楼下的小面馆',
+  });
+  assert.equal(model.quoteHead(quote), '09-26 21:10');
+  assert.equal(model.quoteMarkdown(quote), '> 09-26 21:10 餐饮 ¥25 · 楼下的小面馆');
+  assert.equal(model.quoteMarkdown(model.normalizeQuote({ label: '餐饮 ¥25', date: '2026-09-26', time: '21:10' })), '> 09-26 21:10 餐饮 ¥25');
+  assert.equal(
+    model.quoteMarkdown(model.normalizeQuote({ label: '转账 ¥500', route: '现金 → 招行卡', date: '2026-09-26', time: '18:30' })),
+    '> 09-26 18:30 转账 ¥500 · 现金 → 招行卡',
+  );
+  assert.equal(model.quoteMarkdown(null), '');
+});
+
+test('引用记账：条目保留 / 裁剪 quotes，搜索命中，字数不计引用', () => {
+  const quote = model.normalizeQuote({ label: '餐饮 ¥25', date: '2026-09-26', time: '21:10', note: '楼下的小面馆' });
+  const entry = model.normalizeEntry({ id: 'e1', date: '2026-09-26', content: '正文', quotes: [quote], createdAt: 1 });
+  assert.equal(entry.quotes.length, 1);
+  assert.equal(model.matchesQuery(entry, '小面馆'), true, '引用文案要能搜到');
+  assert.equal(model.matchesQuery(entry, '餐饮'), true);
+  assert.equal(model.wordCount(entry.content), 2, '引用不算自己写的字');
+
+  // 上限 50 条，空 label 的丢掉
+  const many = model.normalizeEntry({
+    id: 'e2',
+    date: '2026-09-26',
+    content: 'x',
+    quotes: Array.from({ length: 60 }, (_, index) => ({ label: `第 ${index} 条`, date: '2026-09-26' })).concat([{ date: '2026-09-26' }]),
+    createdAt: 1,
+  });
+  assert.equal(many.quotes.length, 50);
+  assert.equal(many.quotes.every((item) => item.label), true);
+});
+
+test('引用记账：Markdown 导出把引用排在正文之后', () => {
+  const entry = model.normalizeEntry({
+    id: 'e1',
+    date: '2026-09-26',
+    content: '今天写了点东西',
+    quotes: [model.normalizeQuote({ label: '餐饮 ¥25', date: '2026-09-26', time: '21:10' })],
+    createdAt: 1,
+  });
+  const markdown = model.toMarkdown([entry], { now: Date.parse('2026-09-26T22:00:00') });
+  const bodyAt = markdown.indexOf('今天写了点东西');
+  const quoteAt = markdown.indexOf('> 09-26 21:10 餐饮 ¥25');
+  assert.equal(bodyAt >= 0 && quoteAt > bodyAt, true, '引用要排在正文之后');
+});
+
+test('备份往返：引用块跟着日记一起存回来', async () => {
+  const quote = model.normalizeQuote({ label: '餐饮 ¥25', date: '2026-09-26', time: '21:10', note: '楼下的小面馆' });
+  const payload = model.buildExportPayload(
+    [{ id: 'e1', date: '2026-09-26', time: '21:10', content: '正文', quotes: [quote], createdAt: 1 }],
+    {},
+  );
+  const jsonOut = await importer.parseBackup({ bytes: new TextEncoder().encode(JSON.stringify(payload)), filename: '备份.json' });
+  assert.equal(jsonOut.entries[0].quotes.length, 1);
+  assert.equal(jsonOut.entries[0].quotes[0].label, '餐饮 ¥25');
+
+  const zipBytes = await Diary.zip.createZip([{ name: 'entries.json', data: JSON.stringify(payload) }]);
+  const zipOut = await importer.parseBackup({ bytes: zipBytes, filename: '完整备份.zip' });
+  assert.equal(zipOut.entries[0].quotes.length, 1);
+  assert.equal(zipOut.entries[0].quotes[0].note, '楼下的小面馆');
+});
+
+test('日历当天列表：纯按时间倒序，收藏不置顶', () => {
+  const list = [
+    model.normalizeEntry({ id: 'a', date: '2026-09-26', time: '08:00', pinned: true }),
+    model.normalizeEntry({ id: 'b', date: '2026-09-26', time: '21:10' }),
+    model.normalizeEntry({ id: 'c', date: '2026-09-26', time: '12:30' }),
+  ];
+  assert.deepEqual(model.sortEntriesByTime(list).map((item) => item.id), ['b', 'c', 'a']);
+  assert.deepEqual(model.sortEntriesByTime(list, 'asc').map((item) => item.id), ['a', 'c', 'b']);
+  // 同一时间按创建时间倒序
+  const same = [
+    model.normalizeEntry({ id: 'x', date: '2026-09-26', time: '09:00', createdAt: 1 }),
+    model.normalizeEntry({ id: 'y', date: '2026-09-26', time: '09:00', createdAt: 2 }),
+  ];
+  assert.deepEqual(model.sortEntriesByTime(same).map((item) => item.id), ['y', 'x']);
 });

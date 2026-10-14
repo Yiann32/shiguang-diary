@@ -2925,6 +2925,78 @@ button.caldate:hover .caldate__main {
 
 /* ------------------------------------------------------------ 表单控件 */
 
+/* 引用记账：正文下方的只读引用块 */
+.quotechip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.quotechip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 34px 8px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.quotechip:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.quotechip__main {
+  /* 小两号 + 强调色 */
+  font-size: calc(var(--font-size) - 2px);
+  font-weight: 600;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.quotechip__route {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.quotechip__meta {
+  /* 再小一号 + 灰色 */
+  font-size: calc(var(--font-size) - 4px);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+.quotechip__del {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quotechip__del:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 预览 / 打印里的引用块没有删除按钮，右边不用留位置 */
+.quotechip--static {
+  padding-right: 12px;
+}
+
 .fieldrow--stack {
   flex-direction: column;
   align-items: stretch;

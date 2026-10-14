@@ -289,6 +289,19 @@ try {
     ),
   );
   check('日期下方列出当天日记', await cdp.evaluate('document.querySelectorAll(".dayrow").length === 1', session));
+  check(
+    '日历下方当天列表按时间从新到旧',
+    await cdp.evaluate(
+      `(() => {
+        const times = [...document.querySelectorAll('.dayrow__time')].map((node) => node.textContent);
+        for (let index = 1; index < times.length; index += 1) {
+          if (times[index - 1] < times[index]) return false;
+        }
+        return true;
+      })()`,
+      session,
+    ),
+  );
 
   // 左右滑动切换月份，并且切完自动落到那个月
   const monthBefore = await cdp.evaluate('document.querySelector("#calMonthLabel").textContent', session);
@@ -836,12 +849,20 @@ try {
     await cdp.evaluate(`document.querySelector('#todoPageBody .panel').textContent.includes('完成统计')`, session),
   );
   check(
-    '统计默认「近 7 天」，能统计到分组完成次数',
+    '统计默认「近 7 天」，行上写完成率（如 1/2）且进度条有填充',
     await cdp.evaluate(
       `(() => {
         const active = document.querySelector('#todoPageBody .todo-seg .segmented__item.is-active');
         const row = document.querySelector('#todoPageBody .lstats__row');
-        return active.textContent === '近 7 天' && row.textContent.includes('默认清单') && row.textContent.includes('完成 1 次');
+        const value = row && row.querySelector('.lstats__value');
+        const fill = row && row.querySelector('.lstats__fill');
+        return (
+          active.textContent === '近 7 天'
+          && row.textContent.includes('默认清单')
+          && /^\\d+\\/\\d+$/.test(value.textContent)
+          && Number(value.textContent.split('/')[0]) >= 1
+          && fill.getBoundingClientRect().width > 0
+        );
       })()`,
       session,
     ),
@@ -970,26 +991,61 @@ try {
     ),
   );
 
-  // 日记里引用一条记账
+  // 日记里引用一条记账（只读引用块）
   await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);
   await cdp.waitFor('document.querySelectorAll(".card").length >= 1', session, { label: '时间线卡片' });
   await cdp.evaluate('document.querySelectorAll(".card")[0].click()', session);
   await cdp.waitFor('document.querySelector("#editor").hidden === false', session, { label: '打开日记' });
-  const quoteBefore = await cdp.evaluate('document.querySelector("#fContent").value.length', session);
+  const contentBeforeQuote = await cdp.evaluate('document.querySelector("#fContent").value', session);
   await cdp.evaluate('document.querySelector("#btnQuoteLedger").click()', session);
   await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '引用记账弹窗' });
   await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
-  await new Promise((done) => setTimeout(done, 500));
+  await cdp.waitFor('Boolean(document.querySelector("#editorQuotes .quotechip"))', session, { label: '引用块出现' });
   check(
-    '引用记账插进正文的是一行带金额的引用',
+    '引用是正文下方的只读块：带金额、不可编辑、正文没被改动',
     await cdp.evaluate(
       `(() => {
-        const value = document.querySelector('#fContent').value;
-        return value.includes('> ') && value.includes('¥') && value.length > ${quoteBefore};
+        const chip = document.querySelector('#editorQuotes .quotechip');
+        return (
+          Boolean(chip)
+          && chip.textContent.includes('¥')
+          && chip.getAttribute('contenteditable') === null
+          && document.querySelectorAll('#editorQuotes input, #editorQuotes textarea').length === 0
+          && document.querySelector('#fContent').value === ${JSON.stringify(contentBeforeQuote)}
+        );
       })()`,
       session,
     ),
   );
+  await new Promise((done) => setTimeout(done, 800));
+  check(
+    '引用块跟着日记一起存进了数据库',
+    await cdp.evaluate(
+      `new Promise((resolve) => {
+        const request = indexedDB.open('diary-db');
+        request.onsuccess = () => {
+          const all = request.result.transaction('entries', 'readonly').objectStore('entries').getAll();
+          all.onsuccess = () => resolve(all.result.some((item) => Array.isArray(item.quotes) && item.quotes.length > 0));
+          all.onerror = () => resolve(false);
+        };
+        request.onerror = () => resolve(false);
+      })`,
+      session,
+    ),
+  );
+  await cdp.evaluate(
+    `(() => {
+      const chip = document.querySelector('#editorQuotes .quotechip');
+      chip.focus();
+      chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+      return true;
+    })()`,
+    session,
+  );
+  await cdp.waitFor('document.querySelectorAll("#editorQuotes .quotechip").length === 0', session, {
+    label: '引用整条删除',
+  });
+  check('按一下删除键整条引用就没了', true);
   await cdp.evaluate('document.querySelector("#btnBack").click()', session);
   await cdp.waitFor('document.querySelector("#editor").hidden === true', session, { label: '关掉编辑器' });
 

@@ -750,29 +750,34 @@
     const nameOf = new Map((groups || []).filter((g) => g && g.id).map((g) => [g.id, g.name]));
 
     const rows = new Map();
-    for (const id of nameOf.keys()) rows.set(id, { groupId: id, name: nameOf.get(id), count: 0 });
-    rows.set('', { groupId: '', name: '默认清单', count: 0 });
+    for (const id of nameOf.keys()) rows.set(id, { groupId: id, name: nameOf.get(id), count: 0, pending: 0 });
+    rows.set('', { groupId: '', name: '默认清单', count: 0, pending: 0 });
 
     let total = 0;
     for (const todo of todos || []) {
-      if (!todo || !todo.done) continue;
-      const at = Number(todo.doneAt) || 0;
-      if (!at || at < from || at > to) continue;
+      if (!todo) continue;
       const groupId = todo.groupId && nameOf.has(todo.groupId) ? todo.groupId : '';
       const row = rows.get(groupId);
       if (!row) continue;
+      if (!todo.done) {
+        row.pending += 1;
+        continue;
+      }
+      const at = Number(todo.doneAt) || 0;
+      if (!at || at < from || at > to) continue;
       row.count += 1;
       total += 1;
     }
 
-    const list = [...rows.values()].filter((row) => row.groupId || row.count > 0);
-    const max = Math.max(1, ...list.map((row) => row.count));
-    return {
-      total,
-      rows: list
-        .map((row) => ({ ...row, ratio: row.count / max }))
-        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN')),
-    };
+    // 有未完成或本档有完成的都显示；完成率 = 本档完成 ÷（本档完成 + 当前未完成）
+    const list = [...rows.values()]
+      .filter((row) => row.count > 0 || row.pending > 0)
+      .map((row) => {
+        const denominator = row.count + row.pending;
+        return { ...row, doneInRange: row.count, ratio: denominator > 0 ? row.count / denominator : 0 };
+      })
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN'));
+    return { total, rows: list };
   }
 
   /** 已完成的待办按「完成那天」倒序分组，组内按完成时间倒序 */
@@ -1451,6 +1456,7 @@
       tags: normalizeTags(source.tags),
       pinned: Boolean(source.pinned),
       media: Array.isArray(source.media) ? source.media.filter((item) => typeof item === 'string').slice(0, 24) : [],
+      quotes: normalizeQuotes(source.quotes),
       source: toText(source.source).slice(0, 40),
       createdAt,
       updatedAt,
@@ -1468,6 +1474,7 @@
       tags: [],
       pinned: false,
       media: [],
+      quotes: [],
       source: '',
       createdAt: now,
       updatedAt: now,
@@ -1533,6 +1540,8 @@
       entry && entry.content,
       entry && entry.date,
       toText(entry && entry.tags ? entry.tags.join(' ') : ''),
+      // 引用过的记账也算进搜索范围
+      entryQuoteText(entry),
     ];
     return haystack.some((field) => toText(field).toLowerCase().includes(needle));
   }
@@ -1691,6 +1700,94 @@
     return `> ${note ? `${main} · ${note}` : main}`;
   }
 
+  /* --------------------------------------------------- 日记里的记账引用 */
+
+  const MAX_QUOTES = 50;
+
+  /** 一条引用快照：记录那一刻看到的内容，之后改流水也不影响它 */
+  function normalizeQuote(raw, now = Date.now()) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const time = toText(source.time).trim();
+    return {
+      id: toText(source.id).trim() || createId(),
+      ledgerId: toText(source.ledgerId).trim(),
+      label: toText(source.label).trim().slice(0, 40),
+      route: toText(source.route).trim().slice(0, 40),
+      date: isValidDateKey(source.date) ? source.date : '',
+      time: TIME_KEY_RE.test(time) ? time : '',
+      note: toText(source.note).trim().slice(0, 60),
+      createdAt: toTimestamp(source.createdAt, now),
+    };
+  }
+
+  function normalizeQuotes(list, now = Date.now()) {
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((item) => normalizeQuote(item, now))
+      .filter((item) => item.label)
+      .slice(0, MAX_QUOTES);
+  }
+
+  /** 由一条流水生成引用快照 */
+  function quoteFromLedger(item, options) {
+    const config = options || {};
+    if (!item) return null;
+    const categories = categoryIndex(config.categories);
+    const accounts = categoryIndex(config.accounts);
+    const category = categories.get(item.categoryId);
+    const account = accounts.get(item.accountId);
+    const toAccount = accounts.get(item.toAccountId);
+    const type = normalizeLedgerType(item.type);
+    const label =
+      type === 'transfer'
+        ? `转账 ¥${formatMoney(item.amount)}`
+        : `${category ? category.name : '未分类'} ${type === 'income' ? '+' : ''}¥${formatMoney(item.amount)}`;
+    const route =
+      type === 'transfer'
+        ? [account ? account.name : '', toAccount ? toAccount.name : ''].filter(Boolean).join(' → ')
+        : '';
+    return normalizeQuote({
+      ledgerId: item.id,
+      label,
+      route,
+      date: item.date,
+      time: item.time,
+      note: item.note,
+      createdAt: Date.now(),
+    });
+  }
+
+  /** 引用块的日期时间小字（09-26 21:10） */
+  function quoteHead(quote) {
+    if (!quote) return '';
+    return [toText(quote.date).slice(5), toText(quote.time)].filter(Boolean).join(' ');
+  }
+
+  /** 引用快照 → Markdown 引用行（预览与导出共用） */
+  function quoteMarkdown(quote) {
+    if (!quote || !toText(quote.label)) return '';
+    const main = [quoteHead(quote), toText(quote.label)].filter(Boolean).join(' ');
+    const tail = [toText(quote.route), toText(quote.note)].filter(Boolean).join(' · ');
+    return `> ${tail ? `${main} · ${tail}` : main}`;
+  }
+
+  function entryQuoteText(entry) {
+    return normalizeQuotes(entry && entry.quotes)
+      .map((quote) => [quote.label, quote.route, quote.note, quoteHead(quote)].filter(Boolean).join(' '))
+      .join(' ');
+  }
+
+  /** 日历下方当天列表用：只按时间倒序，收藏不置顶 */
+  function sortEntriesByTime(entries, mode = 'desc') {
+    const dir = mode === 'asc' ? 1 : -1;
+    return [...(entries || [])].sort((a, b) => {
+      const left = toText(a && a.time);
+      const right = toText(b && b.time);
+      if (left !== right) return (left < right ? -1 : 1) * dir;
+      return (((a && a.createdAt) || 0) - ((b && b.createdAt) || 0)) * dir;
+    });
+  }
+
   function buildExportPayload(entries, options) {
     const config = options || {};
     const list = sortEntries(entries, 'asc');
@@ -1782,6 +1879,7 @@
       lines.push(`*${meta.join('　·　')}*`, '');
       if (entry.tags.length) lines.push(entry.tags.map((tag) => `#${tag}`).join(' '), '');
       if (entry.content.trim()) lines.push(entry.content.trim(), '');
+      for (const quote of entry.quotes || []) lines.push(quoteMarkdown(quote), '');
     }
     return lines.join('\n');
   }
@@ -1959,6 +2057,7 @@
     dayDiff,
     entryExcerpt,
     entryTitle,
+    entryQuoteText,
     escapeHtml,
     filterEntries,
     formatBytes,
@@ -1997,6 +2096,8 @@
     normalizeLedger,
     normalizeLedgerType,
     normalizePriority,
+    normalizeQuote,
+    normalizeQuotes,
     normalizeReceivable,
     normalizeRecurring,
     normalizeEntry,
@@ -2008,10 +2109,14 @@
     pendingRecurringDates,
     pressureSummary,
     priorityLabel,
+    quoteFromLedger,
+    quoteHead,
+    quoteMarkdown,
     recurringDates,
     renderMarkdown,
     shiftDateKey,
     sortEntries,
+    sortEntriesByTime,
     sortCommissions,
     sortLedger,
     sortTodoGroups,

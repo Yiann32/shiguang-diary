@@ -75,6 +75,7 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 - 约稿订单有两套时间，别搞混：`deadline` 是**稿件截止日**（日历排单唯一依据），`dueMonth` / `dueDate` 是**尾款什么时候付**（专区按月分组用）。
 - 只有从订单上点「付款 / 收款」才会写 `paid` / `received`；手工在流水里记一笔不会回写订单。付款生成的支出流水带 `payableId`。
 - 导出 v3 会自动带上账本、分类、账户、预算、周期规则、待办与流水；导入兼容 v2（只有日记）。
+- 日记的「引用记账」是**存在 `entry.quotes` 里的快照**（不是正文文本）：`{ id, ledgerId, label, route, date, time, note, createdAt }`。编辑区里只读渲染（正文下方），`×` 或退格 / Delete 整条删；导出 Markdown 时还原成 `> 09-26 21:10 餐饮 ¥25 · …`，搜索把它算进去，字数不算。改动流水不会影响已引用的日记。
 - **自家备份必须走 `model.parseImport`**（`js/importer.js` 里的 `isOwnBackup` / `readOwnBackup`）：通用字段映射只认到 `date`，会把日记的具体时间冲成 `00:00`，也读不出 v3 的集合 —— 这两个 bug 都出现过（JSON 与完整备份 ZIP 两条路都会中）。
 - **覆盖导入只替换「备份里真的带了」的表**（`store.importCollections` 的 `has()` 判断）：否则导入一份只有日记的备份，会把现有账本 / 待办整表清空。
 
@@ -158,6 +159,9 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 | 待办排序 / 优先级 | `js/model.js` 的 `sortTodos` / `TODO_PRIORITIES` |
 | 待办完成统计口径 | `js/model.js` 的 `todoGroupStats`（近 7 天 / 本月 / 全部）与 `todoDoneByDay` |
 | 引用记账那行文案 | `js/model.js` 的 `ledgerQuoteLine` |
+| 引用块快照 / 只读渲染 | `js/model.js` 的 `quoteFromLedger` / `quoteMarkdown`，`js/app.js` 的 `renderEditorQuotes` / `quoteChipNode` |
+| 日历当天列表排序 | `js/model.js` 的 `sortEntriesByTime`（只按时间，收藏不置顶） |
+| 待办完成率 | `js/model.js` 的 `todoGroupStats`（`count` = 本档完成数，`pending` = 当前未完成数） |
 | 键盘顶部的 chips | `js/app.js` 的 `renderKeypadChips`（日期 / 账户 / 备注，`data-chip` 用来定位） |
 | 约稿状态与分组 | `js/model.js` 的 `commissionPayLabel` / `commissionGroups` / `commissionDueMap` |
 | 待收款项汇总 | `js/model.js` 的 `receivableTotals` / `clientStats` |

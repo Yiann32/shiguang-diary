@@ -74,6 +74,11 @@ const SEED = `(async () => {
     entries[0].media.push(id);
   });
 
+  // 给第一篇日记加一条「引用记账」，截图里能看到只读引用块
+  entries[0].quotes = [
+    { id: 'quote-demo-1', ledgerId: 'demo-ledger-1', label: '餐饮 ¥32.5', route: '', date: dayKey(0), time: '12:20', note: '楼下的面馆', createdAt: Date.now() },
+  ];
+
   await new Promise((resolve, reject) => {
     const request = indexedDB.open('diary-db');
     request.onerror = () => reject(request.error);
