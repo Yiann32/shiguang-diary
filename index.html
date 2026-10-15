@@ -152,6 +152,15 @@
               </button>
             </section>
 
+            <section class="panel" id="rewardRow" hidden>
+              <button type="button" class="actionrow" id="btnOpenReward">
+                <span class="actionrow__icon" id="rewardRowIcon" aria-hidden="true"></span>
+                <span>赞赏</span>
+                <span class="spacer"></span>
+                <span class="actionrow__chevron" aria-hidden="true"></span>
+              </button>
+            </section>
+
             <section class="panel">
               <h3 class="section__title">外观</h3>
               <div class="segmented" id="themeGroup" role="group" aria-label="主题">
@@ -270,6 +279,29 @@
               </div>
             </div>
             <div class="screen__body" id="commissionBody"></div>
+          </section>
+
+          <!-- 二级页：赞赏（跳爱发电主页，不做金额 UI） -->
+          <section class="subpage" id="rewardPage" hidden aria-labelledby="rewardPageTitle">
+            <header class="topbar">
+              <button class="iconbtn" id="btnRewardBack" type="button" aria-label="返回" title="返回"></button>
+              <h2 class="topbar__heading" id="rewardPageTitle">赞赏</h2>
+            </header>
+            <div class="screen__body">
+              <section class="panel">
+                <h3 class="section__title">请我喝杯奶茶</h3>
+                <p class="hint">拾光日记完全免费、不联网、没有广告，也不解锁任何东西。如果它帮到了你，可以自愿赞赏一份支持。</p>
+                <div class="btnrow">
+                  <button class="btn btn--primary" type="button" id="btnRewardOpen">去爱发电赞赏</button>
+                  <button class="btn btn--soft" type="button" id="btnRewardCopy">复制赞赏链接</button>
+                </div>
+                <p class="hint">会跳到浏览器打开爱发电页面，金额在那边自己选、也可以自定义。赞赏完全自愿，不影响任何功能。</p>
+              </section>
+              <section class="panel">
+                <h3 class="section__title">赞赏链接</h3>
+                <div class="rows" id="rewardLinkBox"></div>
+              </section>
+            </div>
           </section>
 
           <!-- 二级页：待办 -->

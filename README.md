@@ -4,6 +4,16 @@
 
 所有内容只存在你自己的设备上，不联网、不上传。
 
+## 下载（永远是这一条链接）
+
+**<https://yiann32.github.io/shiguang-diary/>** —— 打开或扫码就是最新版 APK，网址固定不变。
+
+- 下载页：<https://yiann32.github.io/shiguang-diary/>
+- APK 直链：<https://yiann32.github.io/shiguang-diary/shiguang-diary.apk>
+- 只放**最新一版**；装的时候先把 APK 存到手机本地，再用文件管理器点开安装。别走浏览器 / 应用商店的「极速安装」，那类工具会重新签名，之后新版就覆盖升级不了。
+
+发新版只要重新打包装一次：`npm run release:apk`（细节见 [diary.md](diary.md) 第 6 节）。
+
 <p align="center">
   <img src="screenshots/mobile-timeline.png" width="250" alt="时间线与待办" />
   <img src="screenshots/mobile-commission.png" width="250" alt="约稿专区" />
@@ -78,6 +88,10 @@
 记账模式除了当天的实际支出，还会用**浅色小方块**标出那天要付的约稿尾款，详情区固定显示一行「本月尾款预支出」（含逾期未付的，并注明逾期金额）。日历下方的详情区顶部还有一个常驻的小加号，按当前模式在当前选中的日期直接新建（日记 / 记一笔 / 待办 / 约稿）。
 
 点某一天，下面的详情也跟着模式变；切换会被记住。想换年月，点左上角的日期就行；「回到今天」在右边。
+
+## 赞赏（可选）
+
+「我的 → 赞赏」里有一个入口，点开跳到作者的[爱发电主页](https://afdian.com/a/yyqxoc)。赞赏完全自愿、不影响任何功能，App 里不做金额选择（金额在爱发电页面里自己选 / 自定义）。只有这一步需要联网，其余功能全都离线。
 
 ## 快速开始
 

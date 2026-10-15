@@ -42,7 +42,7 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
   - 支出 = 约稿订单（付给画师的尾款），点行编辑，点行上的「付款」生成一笔支出流水
   - 收入 = 待收款项（甲方欠你的钱），点「收款」生成一笔收入流水
   - 资金压力 = 预计工资/其他收入/固定支出 + 自动带入的本月待付尾款，实时算结余
-- **我的**：日记统计（二级页）、外观、备份与迁移、安装、关于。
+- **我的**：日记统计（二级页）、**赞赏**（二级页，跳爱发电，入口地址 `js/app.js` 的 `REWARD_URL`，留空则整块隐藏）、外观、备份与迁移、安装、关于。
 - **二级页**：待办、日记统计、记账统计、账本设置，统一用 `.subpage`（从右侧滑入，`is-leaving` 滑出）。
 - **金额键盘**：`.keypad` 全屏面板，分类九宫格 + 数字键盘，是唯一的记账录入入口（新增和编辑都走它）。
 
@@ -171,5 +171,34 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 | 导入字段映射 | `js/importer.js` 的 `mapRecord` / `parseDiaryContent` |
 | 界面图标 | `js/ui.js` 的 `ICONS` |
 | 应用图标 | `tools/make-icons.mjs` + `npm run icons`，再 `node tools/setup-android.mjs` |
+| 下载页样式 / 文案 | `tools/release-page.mjs` |
+| 赞赏入口地址 | `js/app.js` 的 `REWARD_URL`（空字符串 = 隐藏入口）；打开外链用 `js/ui.js` 的 `openExternal` |
 
 **明确不做**：心情系统、天气、编辑器富文本工具条、回收站、云同步、第三方账单导入、本地通知提醒。
+
+## 6. 发布与固定下载网址
+
+公开仓库：<https://github.com/Yiann32/shiguang-diary>（源码 `main` 分支）。
+给朋友只发这一条链接，永远是最新版：
+
+- 下载页 <https://yiann32.github.io/shiguang-diary/>
+- APK 直链 <https://yiann32.github.io/shiguang-diary/shiguang-diary.apk>
+
+**怎么做到的**：另有独立分支 `apk`，**永远只有一个提交**（每次强推覆盖），里面只有两个文件
+`index.html` + `shiguang-diary.apk`；GitHub Pages 指向这条分支的根目录。这样主仓库历史不会被每版 4 MB 的包撑大。
+
+**发新版**（打完包之后一句命令）：
+
+```bash
+npm test && npm run smoke
+npm run build:native
+npx cap sync android
+cd android; $env:JAVA_HOME='C:\Users\Unknow\.jdks\jbr-21.0.11'; .\gradlew.bat assembleDebug
+npm run release:apk        # 生成下载页 + 二维码，强推 apk 分支
+```
+
+- `tools/release-apk.mjs` 读 `android/app/build/outputs/apk/debug/app-debug.apk` 的版本 / 大小 / 时间，在 `.release/`（已 gitignore）里生成单文件下载页并推 `apk` 分支；`--dry` 只生成不推送，`--apk=...` 换包，`--version=...` 换版本号。
+- 下载页里的二维码是 `tools/make-qr.mjs` 现场生成的**内联 SVG**（自研极简编码器：字节模式、版本 1–6、EC level M、8 掩码按罚分选优），页面不依赖任何外部资源，生成前会自检（格式信息两副本对照标准表、定位 / 校正 / 定时图案、数据规模、反解回原文）。
+- 版本号取自 `js/app.js` 的 `VERSION`（和 App 里「关于」显示的一致）。
+- 首次必须**手动**在仓库 Settings → Pages 里把 Source 设为 `apk / (root)`；之后每次推送会自动更新，链接不变。
+- 国内优先用 `*.github.io`；不要改用 Releases 的资源链接（`objects.githubusercontent.com` 国内常打不开）。

@@ -11,7 +11,8 @@
     "smoke": "node tools/smoke.mjs",
     "screenshots": "node tools/screenshot.mjs",
     "icons": "node tools/make-icons.mjs",
-    "build:native": "node tools/build-www.mjs"
+    "build:native": "node tools/build-www.mjs",
+    "release:apk": "node tools/release-apk.mjs"
   },
   "engines": {
     "node": ">=18"

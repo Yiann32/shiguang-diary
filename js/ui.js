@@ -24,6 +24,7 @@
     wallet: '<path d="M4 7.5h16v11H4z"/><path d="M4 10.5h16"/><path d="M15.5 14.2h2"/>',
     brush: '<path d="M5 4.5h9l4 4v11H5z"/><path d="M13.5 4.5V9H18"/><path d="M9.5 15.2l3.5-3.5 2 2-3.5 3.5-2.4.4z"/>',
     star: '<path d="M12 4.6l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.6-4.8 2.6.9-5.4L4.2 10.3l5.4-.8z"/>',
+    heart: '<path d="M12 19.6C10.4 18.4 4.8 14.2 4.8 10.4A3.7 3.7 0 0 1 12 8a3.7 3.7 0 0 1 7.2 2.4c0 3.8-5.6 8-7.2 9.2z"/>',
     eye: '<path d="M2.8 12S6.4 6.6 12 6.6 21.2 12 21.2 12 17.6 17.4 12 17.4 2.8 12 2.8 12z"/><path d="M12 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2z"/>',
     trash: '<path d="M5 7h14M9.5 7V5h5v2"/><path d="M7 7l.9 12.5h8.2L17 7"/><path d="M10.5 10.5v5.5M13.5 10.5v5.5"/>',
     bulb: '<path d="M9.5 17.5h5M10.5 20.5h3"/><path d="M12 3.5a6 6 0 0 0-3.6 10.8c.7.5 1 1.2 1.1 2h5c.1-.8.4-1.5 1.1-2A6 6 0 0 0 12 3.5z"/>',
@@ -191,5 +192,70 @@
     else dialog.removeAttribute('open');
   }
 
-  Diary.ui = { $, $$, ICONS, closeDialog, debounce, downloadFile, el, icon, openDialog, toast };
+  /**
+   * 打开外部链接。
+   * 原生 App 里 Capacitor 的 WebViewClient 会把「非同源导航」交给系统浏览器
+   * （Bridge.launchIntent → Intent.ACTION_VIEW），所以直接改 location 就行，
+   * App 自己的界面不会真的跳走，返回键回来还在原地。
+   * 网页 / PWA 里开新标签；被弹窗拦截时退化成当前页跳转。
+   */
+  function openExternal(url) {
+    const target = String(url || '').trim();
+    if (!target) return { ok: false, reason: 'empty' };
+    if (isNativePlatform()) {
+      try {
+        root.location.href = target;
+        return { ok: true, native: true };
+      } catch (error) {
+        return { ok: false, reason: 'assign' };
+      }
+    }
+    let opened = null;
+    try {
+      opened = root.open ? root.open(target, '_blank', 'noopener') : null;
+    } catch (error) {
+      opened = null;
+    }
+    if (!opened) {
+      try {
+        root.location.href = target;
+      } catch (error) {
+        return { ok: false, reason: 'assign' };
+      }
+      return { ok: true, fallback: true };
+    }
+    return { ok: true, opened: true };
+  }
+
+  /** 复制文本：优先用异步剪贴板，失败时退回临时 textarea + execCommand。 */
+  async function copyText(text) {
+    const value = String(text == null ? '' : text);
+    if (!value) return false;
+    try {
+      if (root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText) {
+        await root.navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch (error) {
+      /* 落到下面的兜底 */
+    }
+    try {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.top = '-1000px';
+      area.style.opacity = '0';
+      document.body.append(area);
+      area.select();
+      area.setSelectionRange(0, value.length);
+      const ok = document.execCommand('copy');
+      area.remove();
+      return Boolean(ok);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  Diary.ui = { $, $$, ICONS, closeDialog, copyText, debounce, downloadFile, el, icon, openDialog, openExternal, toast };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

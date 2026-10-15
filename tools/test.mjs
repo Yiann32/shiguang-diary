@@ -7,3 +7,5 @@ import './../tests/model.test.mjs';
 import './../tests/store.test.mjs';
 import './../tests/zip.test.mjs';
 import './../tests/ledger.test.mjs';
+import './../tests/qr.test.mjs';
+import './../tests/ui.test.mjs';

@@ -6,13 +6,15 @@
   'use strict';
 
   const Diary = (root.Diary = root.Diary || {});
-  const VERSION = '3.0.0';
+  const VERSION = '3.1.0';
+  /** 赞赏入口：留空则「我的 → 赞赏」整块隐藏（换地址只改这一行） */
+  const REWARD_URL = 'https://afdian.com/a/yyqxoc';
   const AUTOSAVE_DELAY = 500;
 
   function start() {
     const model = Diary.model;
     const ui = Diary.ui;
-    const { $, $$, el, icon, toast, debounce, downloadFile, openDialog, closeDialog } = ui;
+    const { $, $$, el, icon, toast, debounce, downloadFile, openDialog, closeDialog, openExternal, copyText } = ui;
 
     const store = Diary.createStore();
     let settings = Diary.settings.loadSettings();
@@ -139,6 +141,14 @@
       btnStatsBack: $('#btnStatsBack'),
       statsRowIcon: $('#statsRowIcon'),
       btnOpenStats: $('#btnOpenStats'),
+      rewardRow: $('#rewardRow'),
+      rewardRowIcon: $('#rewardRowIcon'),
+      btnOpenReward: $('#btnOpenReward'),
+      rewardPage: $('#rewardPage'),
+      rewardLinkBox: $('#rewardLinkBox'),
+      btnRewardBack: $('#btnRewardBack'),
+      btnRewardOpen: $('#btnRewardOpen'),
+      btnRewardCopy: $('#btnRewardCopy'),
       btnExportCsv: $('#btnExportCsv'),
       editorTodos: $('#editorTodos'),
       keypad: $('#keypad'),
@@ -220,6 +230,8 @@
         btnMoneyAdd: ['plus', 24],
         btnKeypadClose: ['close', 20],
         statsRowIcon: ['chart', 20],
+        rewardRowIcon: ['heart', 20],
+        btnRewardBack: ['back', 22],
         tagRowIcon: ['tag', 18],
         quoteRowIcon: ['wallet', 18],
         wordRowIcon: ['lines', 18],
@@ -918,7 +930,28 @@
       const standalone =
         window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
       dom.installRow.hidden = standalone || !state.installPrompt;
+      dom.rewardRow.hidden = !REWARD_URL;
       renderStats();
+    }
+
+    /** 赞赏：只跳外链（爱发电），不做金额 UI、不写进任何备份 */
+    function renderReward() {
+      if (!dom.rewardPage) return;
+      const ready = Boolean(REWARD_URL);
+      dom.rewardRow.hidden = !ready;
+      dom.btnRewardOpen.disabled = !ready;
+      dom.btnRewardCopy.disabled = !ready;
+      dom.rewardLinkBox.textContent = '';
+      if (!ready) {
+        dom.rewardLinkBox.append(el('p', { class: 'hint', text: '还没设置赞赏链接。' }));
+        return;
+      }
+      dom.rewardLinkBox.append(
+        el('div', { class: 'row' }, [
+          el('span', { class: 'row__label', text: '爱发电' }),
+          el('span', { class: 'row__value', text: REWARD_URL.replace(/^https?:\/\//, '') }),
+        ]),
+      );
     }
 
     /* ------------------------------------------------------------ 编辑器 */
@@ -2773,6 +2806,7 @@
       ledgerStats: () => dom.ledgerStatsPage,
       ledgerSetup: () => dom.ledgerSetupPage,
       commission: () => dom.commissionPage,
+      reward: () => dom.rewardPage,
     };
 
     function openSubpage(name) {
@@ -2785,6 +2819,7 @@
       if (name === 'ledgerStats') renderLedgerStats();
       if (name === 'ledgerSetup') renderLedgerSetup();
       if (name === 'commission') renderCommission();
+      if (name === 'reward') renderReward();
       page.classList.remove('is-leaving');
       page.hidden = false;
       if (name === 'todo') setTimeout(() => dom.todoPageInput.focus(), 90);
@@ -3835,6 +3870,16 @@
       dom.btnLedgerStatsBack.addEventListener('click', () => closeSubpage());
       dom.btnStatsBack.addEventListener('click', () => closeSubpage());
       dom.btnOpenStats.addEventListener('click', () => openSubpage('stats'));
+      dom.btnOpenReward.addEventListener('click', () => openSubpage('reward'));
+      dom.btnRewardBack.addEventListener('click', () => closeSubpage());
+      dom.btnRewardOpen.addEventListener('click', () => {
+        const result = openExternal(REWARD_URL);
+        if (!result.ok) toast('没打开链接，可以复制后自己打开', { tone: 'error' });
+      });
+      dom.btnRewardCopy.addEventListener('click', async () => {
+        const ok = await copyText(REWARD_URL);
+        toast(ok ? '已复制赞赏链接' : '复制失败，请手动记下链接', { tone: ok ? 'success' : 'error' });
+      });
       dom.btnExportCsv.addEventListener('click', exportLedgerCsv);
       dom.ledgerStatsRange.addEventListener('click', (event) => {
         const button = event.target.closest('[data-range]');

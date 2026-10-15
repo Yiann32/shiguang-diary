@@ -383,6 +383,62 @@ try {
   );
   await cdp.evaluate('document.querySelector("#btnStatsBack").click()', session);
   await cdp.waitFor('document.querySelector("#statsPage").hidden === true', session, { label: '退出日记统计' });
+
+  // 赞赏：我的 → 赞赏二级页 → 点按钮跳爱发电（截获 window.open，顺便盯住页面里的报错）
+  await cdp.evaluate(
+    `(() => {
+      window.__opened = [];
+      window.__pageErrors = [];
+      window.addEventListener('error', (event) => window.__pageErrors.push(String(event.message)));
+      window.__realOpen = window.open;
+      window.open = (url) => {
+        window.__opened.push(String(url));
+        return { closed: false };
+      };
+    })()`,
+    session,
+  );
+  check(
+    '「我的」页有赞赏入口',
+    await cdp.evaluate(
+      `document.querySelector('#rewardRow').hidden === false && document.querySelector('#btnOpenReward').textContent.includes('赞赏')`,
+      session,
+    ),
+  );
+  await cdp.evaluate('document.querySelector("#btnOpenReward").click()', session);
+  await cdp.waitFor('document.querySelector("#rewardPage").hidden === false', session, { label: '赞赏二级页' });
+  check(
+    '赞赏二级页有标题、说明与「去爱发电赞赏」按钮',
+    await cdp.evaluate(
+      `(() => {
+        const page = document.querySelector('#rewardPage');
+        return page.hidden === false
+          && page.querySelector('.topbar__heading').textContent.trim() === '赞赏'
+          && document.querySelector('#rewardLinkBox').textContent.includes('afdian.com/a/yyqxoc')
+          && document.querySelector('#btnRewardOpen').textContent.includes('爱发电');
+      })()`,
+      session,
+    ),
+  );
+  await cdp.evaluate('document.querySelector("#btnRewardOpen").click()', session);
+  check(
+    '点「去爱发电赞赏」打开的是爱发电地址',
+    await cdp.evaluate(`window.__opened.length === 1 && window.__opened[0] === 'https://afdian.com/a/yyqxoc'`, session),
+  );
+  await cdp.evaluate('document.querySelector("#btnRewardCopy").click()', session);
+  await new Promise((done) => setTimeout(done, 120));
+  check(
+    '复制赞赏链接不报错、留在赞赏页',
+    await cdp.evaluate(
+      `document.querySelector('#rewardPage').hidden === false && (window.__pageErrors || []).length === 0`,
+      session,
+    ),
+  );
+  await cdp.evaluate('document.querySelector("#btnRewardBack").click()', session);
+  await cdp.waitFor('document.querySelector("#rewardPage").hidden === true', session, { label: '退出赞赏' });
+  check('赞赏二级页可以返回', true);
+  await cdp.evaluate('window.open = window.__realOpen', session);
+
   await cdp.evaluate('document.querySelector("[data-tab=\'timeline\']").click()', session);
 
   // 记账：键盘式「记一笔」
