@@ -11,6 +11,7 @@ const {
   budgetProgress,
   categoryStats,
   dayLedgerMap,
+  formatAmountInput,
   formatMoney,
   formatMoneyShort,
   groupLedger,
@@ -84,6 +85,18 @@ test('记账：0 元（或负数）算空记录，金额展示有两位上限', 
   assert.equal(formatMoneyShort(1234), '1.2k');
   assert.equal(formatMoneyShort(23456), '2.3w');
   assert.equal(formatMoneyShort(0), '');
+});
+
+test('金额键盘：保留输入中的小数点和尾零', () => {
+  assert.equal(formatAmountInput(''), '0.00');
+  assert.equal(formatAmountInput('0'), '0');
+  assert.equal(formatAmountInput('0.'), '0.');
+  assert.equal(formatAmountInput('12.'), '12.');
+  assert.equal(formatAmountInput('12.5'), '12.5');
+  assert.equal(formatAmountInput('12.50'), '12.50');
+  assert.equal(formatAmountInput('1234.5'), '1,234.5');
+  assert.equal(formatAmountInput('1234567.89'), '1,234,567.89');
+  assert.equal(formatAmountInput('12.345'), '12.34');
 });
 
 test('记账：排序默认最新在前（先比日期再比时间）', () => {
@@ -275,6 +288,18 @@ test('待办：未完成在前按手动顺序，已完成按完成时间归档',
   const stats = todoStats([a, b, done], '2026-10-01');
   assert.deepEqual(stats, { pending: 2, done: 1, overdue: 0, total: 3 });
   assert.equal(todoStats([normalizeTodo({ text: 'X', dueDate: '2026-09-01' })], '2026-10-01').overdue, 1);
+});
+
+test('待办排序：紧急 → 重要 → 普通，同档按手动顺序，已完成置底', () => {
+  const normal = normalizeTodo({ text: '普通', priority: 0, order: 1, createdAt: 40 });
+  const important = normalizeTodo({ text: '重要', priority: 1, order: 1, createdAt: 30 });
+  const urgent = normalizeTodo({ text: '紧急', priority: 2, order: 2, createdAt: 20 });
+  const urgentFirst = normalizeTodo({ text: '紧急第一', priority: 2, order: 1, createdAt: 10 });
+  const done = normalizeTodo({ text: '完成', done: true, doneAt: 9, order: 0 });
+  assert.deepEqual(
+    sortTodos([normal, important, urgent, urgentFirst, done]).map((item) => item.text),
+    ['紧急第一', '紧急', '重要', '普通', '完成'],
+  );
 });
 
 test('待办：日历格子统计当月每天的 未完成/已完成/总数', () => {
@@ -671,6 +696,33 @@ test('待办排序的真实顺序：手动排序优先于创建时间', async ()
   assert.deepEqual(store.todoList().map((item) => item.text), ['第一', '第二', '第三']);
   await store.reorderTodos([c.id, a.id, b.id]);
   assert.deepEqual(store.todoList().map((item) => item.text), ['第三', '第一', '第二']);
+});
+
+test('仓库层：紧急 / 重要自动排到本档最前，普通追加到最后', async () => {
+  const store = await memoryStore();
+  const normal = await store.addTodo('普通待办');
+  await store.addTodo({ text: '重要待办', priority: 1 });
+  await store.addTodo({ text: '紧急待办', priority: 2 });
+  assert.deepEqual(store.todoList().map((item) => item.text), ['紧急待办', '重要待办', '普通待办']);
+
+  const later = await store.addTodo('又一个普通');
+  assert.deepEqual(store.todoList().map((item) => item.text), [
+    '紧急待办',
+    '重要待办',
+    '普通待办',
+    '又一个普通',
+  ]);
+
+  await store.updateTodo(later.id, { priority: 2 });
+  assert.equal(store.todoList()[0].id, later.id);
+  assert.deepEqual(store.todoList().map((item) => item.text).slice(0, 2), ['又一个普通', '紧急待办']);
+
+  await store.updateTodo(normal.id, { priority: 1 });
+  assert.deepEqual(store.todoList().map((item) => item.text).slice(0, 3), [
+    '又一个普通',
+    '紧急待办',
+    '普通待办',
+  ]);
 });
 
 /* ------------------------------------------------------------ 待收款项 */

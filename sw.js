@@ -1,5 +1,5 @@
 /* 应用外壳缓存：装到手机后断网也能打开、也能继续写。 */
-const CACHE = 'diary-shell-v8';
+const CACHE = 'diary-shell-v9';
 const ASSETS = [
   './',
   './index.html',

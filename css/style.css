@@ -1311,6 +1311,7 @@ body {
 }
 
 .edmedia__slot {
+  position: relative;
   flex: none;
   width: 108px;
   height: 108px;
@@ -1324,6 +1325,35 @@ body {
   height: 100%;
   object-fit: cover;
   cursor: zoom-in;
+}
+
+/* 缩略图右上角的移除按钮 */
+.edmedia__del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(20, 21, 26, 0.62);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.edmedia__del:hover {
+  background: rgba(20, 21, 26, 0.8);
+}
+
+.edmedia__del:active {
+  transform: scale(0.9);
 }
 
 .preview {
@@ -1370,6 +1400,24 @@ body {
 .inforow--static {
   display: none;
   flex: none;
+}
+
+/* 「插入图片」这类动作行：桌面端别占满一整列，移动端 footer 是竖排会自动满宽 */
+.inforow--action {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inforow--action .inforow__value {
+  margin-left: 6px;
 }
 
 .inforow__icon {

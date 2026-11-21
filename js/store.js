@@ -43,6 +43,19 @@
       entries = model.sortEntries(entries, mode || 'desc');
     };
 
+    /**
+     * 紧急 / 重要：排到「自己这一档」的最前面（有同档就用同档最小 order − 1）；
+     * 普通：排到所有未完成的最后（全局最大 order + 1），保持原来的追加习惯。
+     */
+    const nextTodoOrder = (priority) => {
+      const pending = todos.filter((item) => !item.done);
+      const max = pending.reduce((value, item) => Math.max(value, Number(item.order) || 0), 0);
+      if (!priority) return max + 1;
+      const same = pending.filter((item) => model.normalizePriority(item.priority) === priority);
+      if (same.length) return Math.min(...same.map((item) => Number(item.order) || 0)) - 1;
+      return max + 1;
+    };
+
     const call = (name, ...args) => (current[name] ? current[name](...args) : Promise.resolve(undefined));
 
     /** 读一张表；适配器没有这个方法时当作空表 */
@@ -1179,9 +1192,8 @@
 
       async addTodo(raw) {
         const payload = typeof raw === 'string' ? { text: raw } : raw || {};
-        const pending = store.todoList().filter((item) => !item.done);
-        const base = ((pending[pending.length - 1] || {}).order || 0) + 1;
-        const todo = model.normalizeTodo({ ...payload, order: base }, Date.now());
+        const priority = model.normalizePriority(payload.priority);
+        const todo = model.normalizeTodo({ ...payload, order: nextTodoOrder(priority) }, Date.now());
         if (!todo.text) return null;
         todos = [...todos, todo];
         await writeOne('Todos', todo);
@@ -1192,7 +1204,24 @@
       async updateTodo(id, patch) {
         const existing = todos.find((item) => item.id === id);
         if (!existing) return null;
-        const next = model.normalizeTodo({ ...existing, ...(patch || {}), id }, Date.now());
+        const changes = patch || {};
+        const priorityChanged =
+          changes.priority !== undefined &&
+          model.normalizePriority(changes.priority) !== model.normalizePriority(existing.priority);
+        const next = model.normalizeTodo(
+          {
+            ...existing,
+            ...changes,
+            id,
+            // 改成「紧急 / 重要 / 普通」时自动挪到这一档的最前面
+            order: priorityChanged
+              ? nextTodoOrder(model.normalizePriority(changes.priority))
+              : changes.order !== undefined
+                ? changes.order
+                : existing.order,
+          },
+          Date.now(),
+        );
         if (!next.text) return store.removeTodo(id);
         todos = todos.map((item) => (item.id === id ? next : item));
         await writeOne('Todos', next);

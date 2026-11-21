@@ -352,6 +352,21 @@
     return toMoney(value).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
+  /**
+   * 金额键盘的显示：跟着用户按下的原始串走，保留末尾的小数点和尾零。
+   * （formatMoney 会把 "12." 变成 "12"、"12.50" 变成 "12.5"，看起来就像小数点丢了。）
+   */
+  function formatAmountInput(raw) {
+    const text = toText(raw).replace(/[^\d.]/g, '');
+    if (!text) return '0.00';
+    const dot = text.indexOf('.');
+    const intPart = dot === -1 ? text : text.slice(0, dot);
+    const decPart = dot === -1 ? null : text.slice(dot + 1, dot + 3);
+    const digits = intPart.replace(/^0+(?=\d)/, '') || '0';
+    const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return decPart === null ? grouped : `${grouped}.${decPart}`;
+  }
+
   /** 日历格子用：金额太大时缩写成 1.2k / 3.4w */
   function formatMoneyShort(value) {
     const amount = toMoney(value);
@@ -684,11 +699,17 @@
     };
   }
 
-  /** 待办排序：未完成在前、组内按手动顺序；已完成按完成时间倒序归档 */
+  /**
+   * 待办排序：未完成在前；未完成里按 紧急 → 重要 → 普通，同档再按手动顺序；
+   * 已完成按完成时间倒序归档。
+   */
   function sortTodos(list) {
     return [...(list || [])].sort((a, b) => {
       if (Boolean(a.done) !== Boolean(b.done)) return a.done ? 1 : -1;
       if (a.done) return (b.doneAt || 0) - (a.doneAt || 0);
+      const leftPriority = normalizePriority(a.priority);
+      const rightPriority = normalizePriority(b.priority);
+      if (leftPriority !== rightPriority) return rightPriority - leftPriority;
       const left = Number(a.order) || 0;
       const right = Number(b.order) || 0;
       if (left !== right) return left - right;
@@ -2062,6 +2083,7 @@
     filterEntries,
     formatBytes,
     formatDateTime,
+    formatAmountInput,
     formatMoney,
     formatMoneyShort,
     frequencyLabel,

@@ -231,15 +231,93 @@ try {
     await cdp.evaluate('getComputedStyle(document.querySelector(".card")).userSelect === "none"', session),
   );
 
+  // 日记插入图片：入口在引用记账下面 → 选图 → 缩略图 / 卡片缩略图 → 自动保存
+  const imagePath = join(tempDir, 'diary-photo.png');
+  writeFileSync(
+    imagePath,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAG0lEQVR4nGP48OFrVNI0TJIBq+iHD18ZBqUOAOMlhOEE5zo/AAAAAElFTkSuQmCC',
+      'base64',
+    ),
+  );
+  // 刚长按完，第一次 click 会被「长按后的点击」保护吃掉；先补一对 pointer 事件再点
+  await cdp.evaluate(
+    `(() => {
+      const card = document.querySelector('#timeline .card');
+      card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+      card.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }));
+      card.click();
+      return true;
+    })()`,
+    session,
+  );
+  await cdp.waitFor('document.querySelector("#editor").hidden === false', session, { label: '打开日记插图片' });
+  check(
+    '「插入图片」紧跟在「引用记账」下面',
+    await cdp.evaluate(
+      `(() => {
+        const labels = [...document.querySelectorAll('.editor__foot .inforow__label')].map((node) => node.textContent);
+        const quote = labels.indexOf('引用记账');
+        return quote >= 0 && labels[quote + 1] === '插入图片';
+      })()`,
+      session,
+    ),
+  );
+  await cdp.send('DOM.enable', {}, session);
+  const { root: editorRoot } = await cdp.send('DOM.getDocument', {}, session);
+  const { nodeId: editorFileNode } = await cdp.send(
+    'DOM.querySelector',
+    { nodeId: editorRoot.nodeId, selector: '#editorFile' },
+    session,
+  );
+  await cdp.send('DOM.setFileInputFiles', { files: [imagePath], nodeId: editorFileNode }, session);
+  await cdp.waitFor('document.querySelectorAll("#editorMedia .edmedia__img").length === 1', session, {
+    label: '图片缩略图出现',
+  });
+  check(
+    '插入后出现缩略图和张数',
+    await cdp.evaluate(
+      `document.querySelector('#imageCount').textContent === '1/24' && document.querySelectorAll('#editorMedia .edmedia__del').length === 1`,
+      session,
+    ),
+  );
+  await cdp.waitFor('document.querySelector("#saveStatus").textContent.includes("已保存")', session, {
+    label: '图片自动保存',
+  });
+  await cdp.evaluate('document.querySelector("#btnBack").click()', session);
+  await cdp.waitFor('document.querySelector("#editor").hidden === true', session, { label: '返回列表' });
+  await cdp.waitFor('Boolean(document.querySelector("#timeline .card__thumb"))', session, { label: '卡片缩略图' });
+  check('卡片上也能看到图片缩略图', true);
+
   const stored = await cdp.evaluate(READ_DB, session);
   check('数据写进了 IndexedDB', Array.isArray(stored) && stored.length === 1, `现有 ${stored ? stored.length : '?'} 条`);
   check('正文 / 标签都保存正确', stored && stored[0].content === content && stored[0].tags.join(',') === '日常,测试');
+  check('图片 id 写进了日记的 media 字段', stored && Array.isArray(stored[0].media) && stored[0].media.length === 1);
 
   // 刷新后数据还在（手机端停在列表，桌面端会直接打开上次那篇）
   await cdp.send('Page.reload', {}, session);
   await cdp.waitFor(BOOTED, session, { label: '刷新后重新渲染' });
   await cdp.waitFor('document.querySelectorAll(".card").length === 1', session, { label: '刷新后列表仍有内容' });
   check('刷新后数据仍在（手机端停在列表）', true);
+  await cdp.waitFor('Boolean(document.querySelector("#timeline .card__thumb"))', session, { label: '刷新后缩略图' });
+  check('刷新后图片缩略图还在（存进 IndexedDB）', true);
+
+  // 缩略图右上角的 × 能单独删图
+  await cdp.evaluate('document.querySelectorAll(".card")[0].click()', session);
+  await cdp.waitFor('document.querySelector("#editor").hidden === false', session, { label: '打开日记删图' });
+  await cdp.waitFor('Boolean(document.querySelector("#editorMedia .edmedia__del"))', session, { label: '删除按钮出现' });
+  await cdp.evaluate('document.querySelector("#editorMedia .edmedia__del").click()', session);
+  await cdp.waitFor('document.querySelectorAll("#editorMedia .edmedia__img").length === 0', session, {
+    label: '缩略图移除',
+  });
+  await cdp.waitFor('document.querySelector("#saveStatus").textContent.includes("已保存")', session, {
+    label: '删图后自动保存',
+  });
+  await cdp.evaluate('document.querySelector("#btnBack").click()', session);
+  await cdp.waitFor('document.querySelector("#editor").hidden === true', session, { label: '返回列表' });
+  await cdp.waitFor('!document.querySelector("#timeline .card__thumb")', session, { label: '卡片缩略图消失' });
+  check('点 × 能单独删掉这张图，卡片缩略图跟着消失', true);
+
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false }, session);
   await cdp.send('Page.reload', {}, session);
   await cdp.waitFor('document.querySelector("#editor").hidden === false', session, { label: '桌面端自动打开上次的日记' });
@@ -301,6 +379,51 @@ try {
       })()`,
       session,
     ),
+  );
+
+  // 下滑看当天列表时月份网格自动收起，回到顶部再展开
+  // 先进来的那次自动保存 / 重渲染要落定，否则填充内容会被 renderDayList 清掉
+  await new Promise((done) => setTimeout(done, 1200));
+  const canScroll = await cdp.evaluate(
+    `(() => {
+      const list = document.querySelector('#dayList');
+      for (let index = 0; index < 14; index += 1) {
+        const block = document.createElement('div');
+        block.className = 'daylist__hint';
+        block.textContent = '填充 ' + index;
+        block.style.height = '64px';
+        list.append(block);
+      }
+      list.scrollTop = 320;
+      list.dispatchEvent(new Event('scroll'));
+      return list.scrollHeight > list.clientHeight + 40;
+    })()`,
+    session,
+  );
+  check('测试用的超长当天列表确实能滚动', Boolean(canScroll));
+  await cdp.waitFor('document.querySelector(".calendar").hidden === true', session, { label: '月历收起' });
+  check('下滑查看当天列表时，上半部分月份网格自动收起', true);
+  await cdp.evaluate(
+    `(() => {
+      const list = document.querySelector('#dayList');
+      list.scrollTop = 0;
+      list.dispatchEvent(new Event('scroll'));
+      return true;
+    })()`,
+    session,
+  );
+  await cdp.waitFor('document.querySelector(".calendar").hidden === false', session, { label: '月历展开' });
+  check('回到列表顶部后月份网格自动展开', true);
+  await cdp.evaluate(
+    `(() => {
+      const list = document.querySelector('#dayList');
+      [...list.querySelectorAll('.daylist__hint')]
+        .filter((node) => node.textContent.startsWith('填充 '))
+        .forEach((node) => node.remove());
+      list.scrollTop = 0;
+      return true;
+    })()`,
+    session,
   );
 
   // 左右滑动切换月份，并且切完自动落到那个月
@@ -469,8 +592,16 @@ try {
       key.click();
       return true;
     })()`;
-  for (const key of ['1', '2', '.', '5']) await cdp.evaluate(tapKey(key), session);
-  check('键盘输入实时显示金额', await cdp.evaluate('document.querySelector("#keypadValue").textContent === "12.5"', session));
+  for (const key of ['1', '2', '.']) await cdp.evaluate(tapKey(key), session);
+  check(
+    '键盘按下小数点后立刻显示（不再被格式化成 12）',
+    await cdp.evaluate('document.querySelector("#keypadValue").textContent === "12."', session),
+  );
+  for (const key of ['5', '0']) await cdp.evaluate(tapKey(key), session);
+  check(
+    '键盘输入实时显示金额并保留尾零',
+    await cdp.evaluate('document.querySelector("#keypadValue").textContent === "12.50"', session),
+  );
   await cdp.evaluate(tapKey('完成'), session);
   await cdp.waitFor('document.querySelector("#keypad").hidden === true', session, { label: '关闭金额键盘' });
   await cdp.waitFor('document.querySelectorAll(".mflow__row").length >= 1', session, { label: '流水出现' });
@@ -934,6 +1065,55 @@ try {
   check(
     '二级页也没有「清除已完成」按钮',
     await cdp.evaluate(`!document.querySelector('#btnTodoPageClear')`, session),
+  );
+  await cdp.evaluate('document.querySelector("#btnTodoBack").click()', session);
+  await cdp.waitFor('document.querySelector("#todoPage").hidden === true', session, { label: '退出待办页' });
+
+  // 待办优先级：紧急 → 重要 → 普通（时间线卡片与二级页一致）
+  for (const text of ['优先级甲', '优先级乙', '优先级丙']) {
+    await cdp.evaluate(typeInto('#todoInput', text), session);
+    await cdp.evaluate('document.querySelector("#btnTodoAdd").click()', session);
+  }
+  const setTodoPriority = async (text, label) => {
+    await cdp.evaluate(
+      `[...document.querySelectorAll('#todoList .todo')].find((row) => row.textContent.includes(${JSON.stringify(text)})).querySelector('.todo__body').click()`,
+      session,
+    );
+    await cdp.waitFor('Boolean(document.querySelector("#formDialog[open]"))', session, { label: '待办编辑弹窗' });
+    await cdp.evaluate(
+      `[...document.querySelectorAll('#formDialogBody [data-field="priority"] .segmented__item')].find((item) => item.textContent === ${JSON.stringify(label)}).click()`,
+      session,
+    );
+    await cdp.evaluate('document.querySelector("#formDialogOk").click()', session);
+    await new Promise((done) => setTimeout(done, 280));
+  };
+  await setTodoPriority('优先级甲', '紧急');
+  await setTodoPriority('优先级乙', '重要');
+  check(
+    '时间线待办卡片按 紧急→重要→普通 排',
+    await cdp.evaluate(
+      `(() => {
+        const rows = [...document.querySelectorAll('#todoList .todo')]
+          .filter((row) => row.textContent.includes('优先级'))
+          .map((row) => row.querySelector('.todo__text').textContent.trim());
+        return rows.length >= 2 && rows[0] === '优先级甲' && rows.indexOf('优先级丙') > rows.indexOf('优先级乙');
+      })()`,
+      session,
+    ),
+  );
+  await cdp.evaluate('document.querySelector("#btnTodoMore").click()', session);
+  await cdp.waitFor('document.querySelector("#todoPage").hidden === false', session, { label: '待办二级页' });
+  check(
+    '待办二级页同样按 紧急→重要→普通 排',
+    await cdp.evaluate(
+      `(() => {
+        const rows = [...document.querySelectorAll('#todoPageBody .todo__list--page .todo')]
+          .filter((row) => row.textContent.includes('优先级'))
+          .map((row) => row.querySelector('.todo__text').textContent.trim());
+        return rows.join('|') === '优先级甲|优先级乙|优先级丙';
+      })()`,
+      session,
+    ),
   );
   await cdp.evaluate('document.querySelector("#btnTodoBack").click()', session);
   await cdp.waitFor('document.querySelector("#todoPage").hidden === true', session, { label: '退出待办页' });

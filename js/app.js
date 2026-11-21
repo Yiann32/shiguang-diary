@@ -6,10 +6,14 @@
   'use strict';
 
   const Diary = (root.Diary = root.Diary || {});
-  const VERSION = '3.1.0';
+  const VERSION = '3.2.0';
   /** 赞赏入口：留空则「我的 → 赞赏」整块隐藏（换地址只改这一行） */
   const REWARD_URL = 'https://afdian.com/a/yyqxoc';
   const AUTOSAVE_DELAY = 500;
+  /** 日记图片：每条最多 24 张（与 model.normalizeEntry 的上限一致） */
+  const MAX_IMAGES = 24;
+  const IMAGE_EDGE = 1600;
+  const IMAGE_MAX_FILE = 20 * 1024 * 1024;
 
   function start() {
     const model = Diary.model;
@@ -67,6 +71,7 @@
       calHead: $('#calHead'),
       calGrid: $('#calGrid'),
       dayList: $('#dayList'),
+      calBlock: $('.calendar'),
       statsGrid: $('#statsGrid'),
       heatmap: $('#heatmap'),
       monthBars: $('#monthBars'),
@@ -77,6 +82,9 @@
       fTags: $('#fTags'),
       editorMedia: $('#editorMedia'),
       editorQuotes: $('#editorQuotes'),
+      btnAddImage: $('#btnAddImage'),
+      editorFile: $('#editorFile'),
+      imageCount: $('#imageCount'),
       preview: $('#preview'),
       status: $('#saveStatus'),
       editorMeta: $('#editorMeta'),
@@ -234,6 +242,7 @@
         btnRewardBack: ['back', 22],
         tagRowIcon: ['tag', 18],
         quoteRowIcon: ['wallet', 18],
+        imageRowIcon: ['image', 18],
         wordRowIcon: ['lines', 18],
         cardPinIcon: ['star', 18],
         cardDeleteIcon: ['trash', 18],
@@ -352,7 +361,10 @@
       for (const button of $$('[data-tab]', $('#tabbar'))) {
         button.setAttribute('aria-selected', String(button.dataset.tab === name));
       }
-      if (name === 'calendar') renderCalendar();
+      if (name === 'calendar') {
+        renderCalendar();
+        resetCalendarView();
+      }
       if (name === 'money') {
         renderMoney();
         // 进记账页时先把周期记账该补的那几次补上（幂等）
@@ -572,6 +584,114 @@
           if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
           const direction = goToMonth(state.calYear, state.calMonth + (dx < 0 ? 1 : -1));
           renderCalendar(direction);
+          resetCalendarView();
+        },
+        { passive: true },
+      );
+    }
+
+    /* -------------------------------------------- 日历：下滑收起上半部分 */
+
+    let calendarCollapsed = false;
+    let calendarAnim = null;
+    let calendarScrollFrame = 0;
+
+    /**
+     * 收起 / 展开整块月历（月份导航 + 星期 + 网格）。
+     * 用 WAAPI 直接量高度做动画，月历 5 周 / 6 周时都不会算错。
+     */
+    function setCalendarCollapsed(collapsed, options) {
+      const block = dom.calBlock;
+      if (!block) return;
+      if (collapsed === calendarCollapsed) return;
+      calendarCollapsed = collapsed;
+      if (calendarAnim) {
+        try {
+          calendarAnim.cancel();
+        } catch (error) {
+          /* 已经结束的动画不能取消，忽略 */
+        }
+        calendarAnim = null;
+      }
+
+      const instant = Boolean(options && options.instant) || typeof block.animate !== 'function';
+      if (instant) {
+        block.hidden = collapsed;
+        block.style.height = '';
+        block.style.opacity = '';
+        block.style.overflow = '';
+        return;
+      }
+
+      if (collapsed) {
+        const height = block.offsetHeight;
+        block.hidden = false;
+        block.style.overflow = 'hidden';
+        const anim = block.animate(
+          [
+            { height: `${height}px`, opacity: 1 },
+            { height: '0px', opacity: 0 },
+          ],
+          { duration: 260, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'both' },
+        );
+        calendarAnim = anim;
+        anim.onfinish = () => {
+          if (calendarAnim !== anim) return;
+          block.hidden = true;
+          block.style.height = '';
+          block.style.opacity = '';
+          block.style.overflow = '';
+          calendarAnim = null;
+        };
+        return;
+      }
+
+      block.hidden = false;
+      block.style.height = 'auto';
+      const height = block.offsetHeight;
+      block.style.height = '0px';
+      block.style.opacity = '0';
+      block.style.overflow = 'hidden';
+      const anim = block.animate(
+        [
+          { height: '0px', opacity: 0 },
+          { height: `${height}px`, opacity: 1 },
+        ],
+        { duration: 260, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'both' },
+      );
+      calendarAnim = anim;
+      anim.onfinish = () => {
+        if (calendarAnim !== anim) return;
+        block.style.height = '';
+        block.style.opacity = '';
+        block.style.overflow = '';
+        calendarAnim = null;
+      };
+    }
+
+    /** 用户主动切月份 / 切模式 / 点日期 / 进日历页时：回到顶部并展开 */
+    function resetCalendarView() {
+      if (dom.dayList) dom.dayList.scrollTop = 0;
+      setCalendarCollapsed(false, { instant: true });
+    }
+
+    function bindCalendarCollapse() {
+      const list = dom.dayList;
+      if (!list) return;
+      list.addEventListener(
+        'scroll',
+        () => {
+          if (calendarScrollFrame) return;
+          calendarScrollFrame = requestAnimationFrame(() => {
+            calendarScrollFrame = 0;
+            const scrollable = list.scrollHeight > list.clientHeight + 40;
+            if (!scrollable) {
+              if (calendarCollapsed) setCalendarCollapsed(false, { instant: true });
+              return;
+            }
+            if (list.scrollTop > 24 && !calendarCollapsed) setCalendarCollapsed(true);
+            else if (list.scrollTop <= 8 && calendarCollapsed) setCalendarCollapsed(false);
+          });
         },
         { passive: true },
       );
@@ -643,6 +763,7 @@
       settings = Diary.settings.saveSettings({ calendarMode: next.key });
       renderCalendarModeButton();
       renderCalendar();
+      resetCalendarView();
       toast(next.label, { tone: 'success', duration: 1200 });
     }
 
@@ -761,6 +882,7 @@
               onclick: () => {
                 state.calSelected = cell.date;
                 renderCalendar();
+                resetCalendarView();
               },
             }, children),
           );
@@ -1052,10 +1174,25 @@
       container.textContent = '';
       const ids = entry.media || [];
       container.hidden = !ids.length;
+      if (dom.imageCount) dom.imageCount.textContent = ids.length ? `${ids.length}/${MAX_IMAGES}` : '';
       if (!ids.length) return;
       for (const id of ids) {
         const slot = el('div', { class: 'edmedia__slot' });
         container.append(slot);
+        slot.append(
+          el('button', {
+            type: 'button',
+            class: 'edmedia__del',
+            text: '×',
+            'aria-label': '移除这张图片',
+            title: '移除图片',
+            onclick: (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void removeEditorImage(id);
+            },
+          }),
+        );
         store
           .getMedia(id)
           .then((blob) => {
@@ -1077,6 +1214,134 @@
       if (entry.tags.length) pieces.push(`${entry.tags.length} 个标签`);
       dom.editorMeta.textContent = pieces.join(' · ');
       if (dom.wordCount) dom.wordCount.textContent = `${words} 字`;
+    }
+
+    /* -------------------------------------------------------- 日记图片 */
+
+    /** 解码图片：优先 createImageBitmap（会自动按 EXIF 方向摆正） */
+    async function decodeImageFile(file) {
+      if (typeof createImageBitmap === 'function') {
+        try {
+          return await createImageBitmap(file, { imageOrientation: 'from-image' });
+        } catch (error) {
+          /* 回落到 <img> */
+        }
+      }
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve(image);
+        };
+        image.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error('图片解码失败'));
+        };
+        image.src = url;
+      });
+    }
+
+    /** 长边压到 1600px 的 JPEG；本来就又小又清的图原样保留 */
+    async function prepareImage(file) {
+      const source = await decodeImageFile(file);
+      try {
+        const width = source.width || source.naturalWidth || 0;
+        const height = source.height || source.naturalHeight || 0;
+        const longest = Math.max(width, height);
+        if (file.size <= 500 * 1024 && longest && longest <= IMAGE_EDGE) return file;
+        if (!width || !height) return file;
+        const scale = Math.min(1, IMAGE_EDGE / longest);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        const context = canvas.getContext('2d');
+        if (!context) return file;
+        context.drawImage(source, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+        return blob || file;
+      } finally {
+        if (source && typeof source.close === 'function') source.close();
+      }
+    }
+
+    /** 选完图片：逐张压缩 → 写进 media 表 → 挂到当前日记上并自动保存 */
+    async function addImages(files) {
+      const entry = currentEntry();
+      if (!entry) return;
+      const picked = [...(files || [])].filter(
+        (file) => file && (/^image\//.test(file.type) || /\.(jpe?g|png|gif|webp|bmp|avif)$/i.test(file.name || '')),
+      );
+      if (!picked.length) {
+        toast('请选择图片文件', { tone: 'error' });
+        return;
+      }
+      const used = (entry.media || []).length;
+      const room = MAX_IMAGES - used;
+      if (room <= 0) {
+        toast(`一篇日记最多 ${MAX_IMAGES} 张图片`, { tone: 'error' });
+        return;
+      }
+      const queue = picked.slice(0, room);
+      if (picked.length > room) toast(`最多 ${MAX_IMAGES} 张，这次只取前 ${room} 张`, { tone: 'error' });
+
+      dom.btnAddImage.disabled = true;
+      setStatus('正在处理图片…');
+      let added = 0;
+      let failed = 0;
+      try {
+        for (let index = 0; index < queue.length; index += 1) {
+          const file = queue[index];
+          if (file.size > IMAGE_MAX_FILE) {
+            failed += 1;
+            continue;
+          }
+          let blob = null;
+          try {
+            blob = await prepareImage(file);
+          } catch (error) {
+            failed += 1;
+            continue;
+          }
+          const id = `${entry.id}:${Date.now().toString(36)}-${index}`;
+          try {
+            await store.putMedia(id, blob);
+          } catch (error) {
+            toast('存储空间不足，先导出备份再清理旧图片', { tone: 'error' });
+            break;
+          }
+          entry.media = [...(entry.media || []), id];
+          added += 1;
+        }
+      } finally {
+        dom.btnAddImage.disabled = false;
+      }
+
+      if (added) {
+        markDirty();
+        renderEditorMedia(entry);
+        renderEditorMeta(entry);
+        toast(added === 1 ? '已插入 1 张图片' : `已插入 ${added} 张图片`, { tone: 'success' });
+      } else {
+        setStatus('');
+      }
+      if (failed) toast(`${failed} 张图片读不出来（可能是 HEIC 或已损坏）`, { tone: 'error' });
+    }
+
+    /** 删掉一张图：解绑 + 清理媒体表 + 自动保存 */
+    async function removeEditorImage(id) {
+      const entry = currentEntry();
+      if (!entry) return;
+      entry.media = (entry.media || []).filter((item) => item !== id);
+      try {
+        await store.removeMedia([id]);
+      } catch (error) {
+        /* 清不掉也不影响这条日记，先保证列表正确 */
+      }
+      renderEditorMedia(entry);
+      renderEditorMeta(entry);
+      markDirty();
+      toast('已移除图片', { tone: 'success' });
     }
 
     /** 手机端的大号日期块：27 / 周日 / 2026.9 */
@@ -3289,8 +3554,8 @@
       for (const button of $$('[data-ledger-type]', dom.keypadTypeGroup)) {
         button.classList.toggle('is-active', button.dataset.ledgerType === pad.type);
       }
-      const amount = Number(pad.amount);
-      dom.keypadValue.textContent = pad.amount && Number.isFinite(amount) ? model.formatMoney(amount) : '0.00';
+      // 用原始输入的格式化版本，保留末尾小数点 / 尾零（"12." 不能显示成 "12"）
+      dom.keypadValue.textContent = model.formatAmountInput(pad.amount);
       dom.keypadValue.className = `keypad__value${
         pad.type === 'expense' ? ' keypad__value--out' : pad.type === 'income' ? ' keypad__value--in' : ''
       }`;
@@ -3948,6 +4213,15 @@
         setTimeout(() => dom.tagDialogInput.focus(), 60);
       });
       dom.btnQuoteLedger.addEventListener('click', () => void openLedgerQuote());
+      if (dom.btnAddImage && dom.editorFile) {
+        dom.btnAddImage.addEventListener('click', () => dom.editorFile.click());
+        dom.editorFile.addEventListener('change', () => {
+          const files = [...(dom.editorFile.files || [])];
+          // 清空 value，下一次还能选同一张图
+          dom.editorFile.value = '';
+          void addImages(files);
+        });
+      }
       dom.btnTagSave.addEventListener('click', () => {
         dom.fTags.value = dom.tagDialogInput.value;
         closeDialog(dom.tagDialog);
@@ -4031,17 +4305,21 @@
 
       $('#btnPrevMonth').addEventListener('click', () => {
         renderCalendar(goToMonth(state.calYear, state.calMonth - 1));
+        resetCalendarView();
       });
       $('#btnNextMonth').addEventListener('click', () => {
         renderCalendar(goToMonth(state.calYear, state.calMonth + 1));
+        resetCalendarView();
       });
       bindCalendarSwipe();
+      bindCalendarCollapse();
       bindEditorSwipe();
       $('#btnCalToday').addEventListener('click', () => {
         const now = model.parseDateKey(today()) || new Date();
         setCalendarMonth(now.getFullYear(), now.getMonth());
         state.calSelected = today();
         renderCalendar();
+        resetCalendarView();
       });
       dom.themeGroup.addEventListener('click', (event) => {
         const button = event.target.closest('[data-theme-value]');
@@ -4214,6 +4492,7 @@
         const match = /^(\d{4})-(\d{2})$/.exec(input.value);
         if (match) {
           renderCalendar(goToMonth(Number(match[1]), Number(match[2]) - 1));
+          resetCalendarView();
         }
         input.remove();
       });
