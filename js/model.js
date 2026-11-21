@@ -377,6 +377,33 @@
     return String(amount);
   }
 
+  /**
+   * 日历「下滑收起月历」的判定（算法照 Headroom.js 0.12）：
+   * - 位移小于 tolerance（默认 6px）：抖动，不切换；
+   * - 向下且已经离开顶部：收起；
+   * - 向上超过 tolerance，或回到顶部（topZone 以内）：展开。
+   * 纯函数，方便单测；滚动监听只负责把结果套到 DOM 上。
+   */
+  function collapseOnScroll(options) {
+    const config = options || {};
+    const positive = (value, fallback) => {
+      const number = Number(value);
+      return Number.isFinite(number) ? Math.max(0, number) : fallback;
+    };
+    const top = Math.max(0, Number(config.top) || 0);
+    const lastTop = Math.max(0, Number(config.lastTop) || 0);
+    const tolerance = positive(config.tolerance, 6);
+    const topZone = positive(config.topZone, 8);
+    const distance = top - lastTop;
+    let collapsed = Boolean(config.collapsed);
+    if (top <= topZone) {
+      collapsed = false;
+    } else if (Math.abs(distance) >= tolerance) {
+      collapsed = distance > 0;
+    }
+    return { collapsed, lastTop: top };
+  }
+
   /* --------------------------------------------------------- 记账：统计 */
 
   /** 记账排序：默认最新的一笔在前（先比日期，再比时间） */
@@ -2067,6 +2094,7 @@
     commissionRemaining,
     commissionStatusLabel,
     computeStreak,
+    collapseOnScroll,
     countByDate,
     createDefaultAccounts,
     createDefaultCategories,

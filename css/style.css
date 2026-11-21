@@ -774,6 +774,8 @@ body {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* 月历收起/展开会改变可视区高度，关掉滚动锚定，避免浏览器改 scrollTop 造成来回闪 */
+  overflow-anchor: none;
   padding: 14px 18px calc(124px + var(--safe-bottom));
 }
 
@@ -1374,6 +1376,22 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--border);
   font-size: 0.8rem;
+  max-height: 260px;
+  overflow: hidden;
+  transition:
+    max-height 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 160ms ease,
+    padding-top 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    border-color 160ms ease;
+}
+
+/* 输入法键盘弹起：收起底部信息栏（标签 / 引用记账 / 插入图片 / 字数 / 保存状态） */
+body.is-typing .editor__foot {
+  max-height: 0;
+  padding-top: 0;
+  opacity: 0;
+  border-top-color: transparent;
+  pointer-events: none;
 }
 
 /* 参考图里那种「图标 + 名称 + 值」的信息行 */

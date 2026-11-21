@@ -6,7 +6,7 @@
   'use strict';
 
   const Diary = (root.Diary = root.Diary || {});
-  const VERSION = '3.2.0';
+  const VERSION = '3.3.0';
   /** 赞赏入口：留空则「我的 → 赞赏」整块隐藏（换地址只改这一行） */
   const REWARD_URL = 'https://afdian.com/a/yyqxoc';
   const AUTOSAVE_DELAY = 500;
@@ -56,7 +56,11 @@
       keypad: null,
     };
 
-    const objectUrls = [];
+    // 时间线与编辑器的 blob URL 必须分池管理：时间线重渲染时不能 revoke 编辑器正在显示的图
+    // （否则输入文字触发自动保存后，编辑器里的缩略图点开就是空白）
+    const timelineUrls = [];
+    const editorUrls = [];
+    const deferredUrls = [];
     const dom = {
       body: document.body,
       timeline: $('#timeline'),
@@ -377,7 +381,7 @@
 
     function renderTimeline() {
       const items = visibleEntries();
-      releaseObjectUrls();
+      releaseUrls(timelineUrls);
       dom.timeline.textContent = '';
       dom.filterLabel.textContent =
         (Diary.settings.FILTERS.find((item) => item.key === state.filter) || { label: '全部' }).label +
@@ -504,7 +508,7 @@
         }
         if (!blob) continue;
         const url = URL.createObjectURL(blob);
-        objectUrls.push(url);
+        timelineUrls.push(url);
         container.append(
           el('img', {
             class: 'card__thumb',
@@ -522,13 +526,31 @@
       if (total > limit) container.append(el('span', { class: 'card__more', text: `+${total - limit}` }));
     }
 
-    function releaseObjectUrls() {
-      while (objectUrls.length) URL.revokeObjectURL(objectUrls.pop());
+    /** 只清自己那一池；正在大图里显示的那张先记下来，等大图关掉再 revoke */
+    function releaseUrls(pool) {
+      for (const url of pool.splice(0)) {
+        if (dom.lightbox && !dom.lightbox.hidden && dom.lightboxImage.src === url) {
+          deferredUrls.push(url);
+        } else {
+          URL.revokeObjectURL(url);
+        }
+      }
+    }
+
+    function flushDeferredUrls() {
+      while (deferredUrls.length) URL.revokeObjectURL(deferredUrls.pop());
     }
 
     function showLightbox(url) {
       dom.lightboxImage.src = url;
       dom.lightbox.hidden = false;
+    }
+
+    function closeLightbox() {
+      if (!dom.lightbox || dom.lightbox.hidden) return;
+      dom.lightbox.hidden = true;
+      dom.lightboxImage.src = '';
+      flushDeferredUrls();
     }
 
     /* -------------------------------------------------------------- 日历 */
@@ -595,6 +617,8 @@
     let calendarCollapsed = false;
     let calendarAnim = null;
     let calendarScrollFrame = 0;
+    let calendarAnimating = false;
+    let calendarLastTop = 0;
 
     /**
      * 收起 / 展开整块月历（月份导航 + 星期 + 网格）。
@@ -616,13 +640,18 @@
 
       const instant = Boolean(options && options.instant) || typeof block.animate !== 'function';
       if (instant) {
+        calendarAnimating = false;
         block.hidden = collapsed;
         block.style.height = '';
         block.style.opacity = '';
         block.style.overflow = '';
+        block.style.pointerEvents = '';
         return;
       }
 
+      // 动画期间锁住滚动判定，避免「高度变化 → 滚动事件 → 反向切换」的死循环
+      calendarAnimating = true;
+      block.style.pointerEvents = 'none';
       if (collapsed) {
         const height = block.offsetHeight;
         block.hidden = false;
@@ -641,6 +670,8 @@
           block.style.height = '';
           block.style.opacity = '';
           block.style.overflow = '';
+          block.style.pointerEvents = '';
+          calendarAnimating = false;
           calendarAnim = null;
         };
         return;
@@ -665,6 +696,8 @@
         block.style.height = '';
         block.style.opacity = '';
         block.style.overflow = '';
+        block.style.pointerEvents = '';
+        calendarAnimating = false;
         calendarAnim = null;
       };
     }
@@ -672,6 +705,7 @@
     /** 用户主动切月份 / 切模式 / 点日期 / 进日历页时：回到顶部并展开 */
     function resetCalendarView() {
       if (dom.dayList) dom.dayList.scrollTop = 0;
+      calendarLastTop = 0;
       setCalendarCollapsed(false, { instant: true });
     }
 
@@ -686,15 +720,75 @@
             calendarScrollFrame = 0;
             const scrollable = list.scrollHeight > list.clientHeight + 40;
             if (!scrollable) {
+              calendarLastTop = list.scrollTop;
               if (calendarCollapsed) setCalendarCollapsed(false, { instant: true });
               return;
             }
-            if (list.scrollTop > 24 && !calendarCollapsed) setCalendarCollapsed(true);
-            else if (list.scrollTop <= 8 && calendarCollapsed) setCalendarCollapsed(false);
+            // 照 Headroom.js：方向 + 容忍距离 + 顶部判定，纯函数便于单测
+            const next = model.collapseOnScroll({
+              lastTop: calendarLastTop,
+              top: list.scrollTop,
+              collapsed: calendarCollapsed,
+            });
+            calendarLastTop = next.lastTop;
+            // 动画进行中只更新 lastTop，不切换状态
+            if (calendarAnimating || next.collapsed === calendarCollapsed) return;
+            setCalendarCollapsed(next.collapsed);
           });
         },
         { passive: true },
       );
+    }
+
+    /* ----------------------------------------- 键盘弹起：收起编辑器底部信息栏 */
+
+    let viewportBaseHeight = 0;
+    let keyboardCheckTimer = 0;
+
+    /** 记住「没有键盘时」的静止高度；只增不减，防止键盘弹起后的矮高度把基准带偏 */
+    function rememberBaseHeight() {
+      const vv = window.visualViewport;
+      const height = (vv && vv.height) || window.innerHeight || 0;
+      if (height > viewportBaseHeight) viewportBaseHeight = height;
+    }
+
+    /**
+     * 用 visualViewport 判断输入法键盘是否弹起：
+     * 记一个无键盘时的静止高度，可见高度少了 120px 以上才算键盘。
+     * 只在手机 + 编辑器打开 + 焦点在输入框时生效。
+     */
+    function updateKeyboardState() {
+      if (!dom.editor || dom.editor.hidden || !isMobile()) {
+        dom.body.classList.remove('is-typing');
+        return;
+      }
+      const vv = window.visualViewport;
+      const visible = (vv && vv.height) || window.innerHeight || 0;
+      if (!visible) return;
+      rememberBaseHeight();
+      const focused = document.activeElement;
+      const typing = Boolean(focused) && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA');
+      const keyboardOpen = viewportBaseHeight - visible > 120;
+      dom.body.classList.toggle('is-typing', keyboardOpen && typing);
+    }
+
+    function bindKeyboardInset() {
+      const schedule = (delay) => {
+        clearTimeout(keyboardCheckTimer);
+        keyboardCheckTimer = setTimeout(updateKeyboardState, delay);
+      };
+      const vv = window.visualViewport;
+      if (vv) {
+        vv.addEventListener('resize', () => schedule(50), { passive: true });
+        vv.addEventListener('scroll', () => schedule(50), { passive: true });
+      }
+      window.addEventListener('resize', () => schedule(80));
+      document.addEventListener('focusin', () => {
+        // 焦点一进来（键盘还没弹）就把静止高度记下来
+        rememberBaseHeight();
+        schedule(60);
+      });
+      document.addEventListener('focusout', () => schedule(250));
     }
 
     /** 编辑器里左右滑动切换上/下一篇：左滑看更新的一篇，右滑看更早的一篇 */
@@ -1148,7 +1242,11 @@
       const active = Boolean(currentEntry());
       dom.editor.hidden = !active;
       dom.body.dataset.view = active ? 'editor' : 'list';
-      if (active) pushHistoryEntry('editor');
+      if (active) {
+        pushHistoryEntry('editor');
+        rememberBaseHeight();
+      }
+      updateKeyboardState();
     }
 
     function fillForm(entry) {
@@ -1171,6 +1269,8 @@
 
     function renderEditorMedia(entry) {
       const container = dom.editorMedia;
+      // 只回收编辑器自己的 URL；时间线那一池由 renderTimeline 管
+      releaseUrls(editorUrls);
       container.textContent = '';
       const ids = entry.media || [];
       container.hidden = !ids.length;
@@ -1198,7 +1298,7 @@
           .then((blob) => {
             if (!blob) return;
             const url = URL.createObjectURL(blob);
-            objectUrls.push(url);
+            editorUrls.push(url);
             slot.append(
               el('img', { class: 'edmedia__img', src: url, alt: '日记图片', onclick: () => showLightbox(url) }),
             );
@@ -3962,6 +4062,9 @@
       }
       state.draft = null;
       state.selectedId = null;
+      releaseUrls(editorUrls);
+      dom.editorMedia.textContent = '';
+      dom.editorMedia.hidden = true;
       renderEditor();
       renderTimeline();
       if (state.tab === 'calendar') renderCalendar();
@@ -4313,6 +4416,7 @@
       });
       bindCalendarSwipe();
       bindCalendarCollapse();
+      bindKeyboardInset();
       bindEditorSwipe();
       $('#btnCalToday').addEventListener('click', () => {
         const now = model.parseDateKey(today()) || new Date();
@@ -4355,10 +4459,7 @@
       wrap.addEventListener('focusout', () => flushSave());
       wrap.addEventListener('submit', (event) => event.preventDefault());
 
-      dom.lightbox.addEventListener('click', () => {
-        dom.lightbox.hidden = true;
-        dom.lightboxImage.src = '';
-      });
+      dom.lightbox.addEventListener('click', () => closeLightbox());
 
       window.addEventListener('beforeprint', renderPreview);
       // 系统返回键 / 侧滑返回：先收起最上面那一层（二级页 / 编辑器），而不是直接退出 App
@@ -4404,7 +4505,7 @@
       if (event.key !== 'Escape') return;
       if (document.querySelector('dialog[open]')) return;
       if (!dom.lightbox.hidden) {
-        dom.lightbox.hidden = true;
+        closeLightbox();
         return;
       }
       if (state.keypad) {

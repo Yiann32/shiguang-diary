@@ -165,6 +165,7 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 | 待办完成率 | `js/model.js` 的 `todoGroupStats`（`count` = 本档完成数，`pending` = 当前未完成数） |
 | 键盘顶部的 chips | `js/app.js` 的 `renderKeypadChips`（日期 / 账户 / 备注，`data-chip` 用来定位） |
 | 日记图片（张数 / 压缩） | `js/app.js` 的 `MAX_IMAGES` / `IMAGE_EDGE` / `IMAGE_MAX_FILE`，缩略图与删除按钮在 `renderEditorMedia` |
+| 图片 blob URL 池 | `js/app.js` 的 `timelineUrls` / `editorUrls` / `deferredUrls`：**两个视图必须分池**，时间线重渲染不能 revoke 编辑器正在显示的图（否则打字自动保存后点开是空白） |
 | 日历下滑折叠阈值 | `js/app.js` 的 `bindCalendarCollapse`（`scrollTop > 24` 收起、`<= 8` 展开） |
 | 待办优先级排序 | `js/model.js` 的 `sortTodos`（紧急 → 重要 → 普通）；新建 / 改优先级落在 `js/store.js` 的 `nextTodoOrder` |
 | 金额键盘的显示串 | `js/model.js` 的 `formatAmountInput`（保留小数点 / 尾零，别改回 `formatMoney`） |

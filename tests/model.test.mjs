@@ -8,6 +8,7 @@ const { model } = loadSource('js/model.js');
 const {
   buildExportPayload,
   collectTags,
+  collapseOnScroll,
   computeStreak,
   createEntry,
   dateLabel,
@@ -372,4 +373,38 @@ test('带图片的条目不算空条目', () => {
   assert.equal(isEmptyEntry({ title: '', content: '', media: [] }), true);
   const entry = normalizeEntry({ content: '', media: ['a', 'b', 3, null] });
   assert.deepEqual(entry.media, ['a', 'b']);
+});
+
+test('日历收起判定：向下收起、向上展开、抖动不动、回顶必展开', () => {
+  // 向下 15px、已离开顶部 → 收起
+  assert.deepEqual(collapseOnScroll({ lastTop: 100, top: 115, collapsed: false }), {
+    collapsed: true,
+    lastTop: 115,
+  });
+  // 向上 15px → 展开
+  assert.deepEqual(collapseOnScroll({ lastTop: 115, top: 100, collapsed: true }), {
+    collapsed: false,
+    lastTop: 100,
+  });
+  // 只抖 2px：状态和 lastTop 都要跟着更新，但不能切换
+  assert.deepEqual(collapseOnScroll({ lastTop: 100, top: 102, collapsed: false }), {
+    collapsed: false,
+    lastTop: 102,
+  });
+  assert.deepEqual(collapseOnScroll({ lastTop: 102, top: 100, collapsed: true }), {
+    collapsed: true,
+    lastTop: 100,
+  });
+  // 回到顶部：无论方向都展开
+  assert.deepEqual(collapseOnScroll({ lastTop: 40, top: 0, collapsed: true }), {
+    collapsed: false,
+    lastTop: 0,
+  });
+  assert.deepEqual(collapseOnScroll({ lastTop: 0, top: 7, collapsed: false }), {
+    collapsed: false,
+    lastTop: 7,
+  });
+  // 自定义 tolerance
+  assert.equal(collapseOnScroll({ lastTop: 100, top: 108, collapsed: false, tolerance: 10 }).collapsed, false);
+  assert.equal(collapseOnScroll({ lastTop: 100, top: 111, collapsed: false, tolerance: 10 }).collapsed, true);
 });

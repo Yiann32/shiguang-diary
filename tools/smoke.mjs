@@ -284,6 +284,31 @@ try {
   await cdp.waitFor('document.querySelector("#saveStatus").textContent.includes("已保存")', session, {
     label: '图片自动保存',
   });
+
+  // 回归：输入文字触发自动保存 → 时间线重渲染会 revoke 共用 blob URL，
+  // 曾经导致「刚插的图点开是空白，退出重进又好了」。
+  await cdp.evaluate(
+    `(() => {
+      const field = document.querySelector('#fContent');
+      field.value = field.value + 'x';
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.value = field.value.slice(0, -1);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
+    session,
+  );
+  await cdp.waitFor('document.querySelector("#saveStatus").textContent.includes("已保存")', session, {
+    label: '输入后再次保存',
+  });
+  await cdp.evaluate('document.querySelector("#editorMedia .edmedia__img").click()', session);
+  await cdp.waitFor('document.querySelector("#lightbox").hidden === false', session, { label: '打开大图' });
+  await cdp.waitFor('document.querySelector("#lightboxImage").naturalWidth > 0', session, {
+    label: '大图有内容',
+  });
+  check('输入文字并自动保存后，编辑器里的图片依然能点开大图', true);
+  await cdp.evaluate('document.querySelector("#lightbox").click()', session);
+  await cdp.waitFor('document.querySelector("#lightbox").hidden === true', session, { label: '关闭大图' });
+
   await cdp.evaluate('document.querySelector("#btnBack").click()', session);
   await cdp.waitFor('document.querySelector("#editor").hidden === true', session, { label: '返回列表' });
   await cdp.waitFor('Boolean(document.querySelector("#timeline .card__thumb"))', session, { label: '卡片缩略图' });
@@ -403,6 +428,49 @@ try {
   check('测试用的超长当天列表确实能滚动', Boolean(canScroll));
   await cdp.waitFor('document.querySelector(".calendar").hidden === true', session, { label: '月历收起' });
   check('下滑查看当天列表时，上半部分月份网格自动收起', true);
+
+  // 小抖动（<6px）不切换；向上滑 24px 就展开（Headroom 式方向判定）
+  await cdp.evaluate(
+    `(() => {
+      const list = document.querySelector('#dayList');
+      list.scrollTop = 318;
+      list.dispatchEvent(new Event('scroll'));
+      return true;
+    })()`,
+    session,
+  );
+  await new Promise((done) => setTimeout(done, 350));
+  check(
+    '滚动只抖 2px 时不会来回切换',
+    await cdp.evaluate('document.querySelector(".calendar").hidden === true', session),
+  );
+  await cdp.evaluate(
+    `(() => {
+      const list = document.querySelector('#dayList');
+      list.scrollTop = 294;
+      list.dispatchEvent(new Event('scroll'));
+      return true;
+    })()`,
+    session,
+  );
+  await cdp.waitFor('document.querySelector(".calendar").hidden === false', session, { label: '上滑后展开' });
+  check('向上滑一小段就展开月历', true);
+  const collapseFlips = await cdp.evaluate(
+    `(async () => {
+      const cal = document.querySelector('.calendar');
+      let flips = 0;
+      const observer = new MutationObserver(() => {
+        flips += 1;
+      });
+      observer.observe(cal, { attributes: true, attributeFilter: ['hidden'] });
+      await new Promise((done) => setTimeout(done, 1500));
+      observer.disconnect();
+      return flips;
+    })()`,
+    session,
+  );
+  check('1.5 秒内不再反复收起/展开', collapseFlips <= 1, `切换 ${collapseFlips} 次`);
+
   await cdp.evaluate(
     `(() => {
       const list = document.querySelector('#dayList');
@@ -1490,6 +1558,56 @@ try {
   await cdp.waitFor(`document.querySelectorAll(".card").length === ${before - 1}`, session, { label: '删除后列表减少' });
   const after = await cdp.evaluate(READ_DB, session);
   check('确认后删除干净', after.length === before - 1, `${before} → ${after.length}`);
+
+  // 键盘弹起收起底栏：独立新页面里缩小视口模拟输入法（不打扰主流程的历史栈）
+  const keyboardSession = await cdp.openPage(`${base}/index.html`);
+  await cdp.waitFor(BOOTED, keyboardSession, { label: '键盘测试首屏' });
+  await cdp.send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+    keyboardSession,
+  );
+  await cdp.send('Page.reload', {}, keyboardSession);
+  await cdp.waitFor(BOOTED, keyboardSession, { label: '键盘测试重新加载' });
+  await cdp.evaluate('document.querySelector("#btnNew").click()', keyboardSession);
+  await cdp.waitFor('document.querySelector("#editor").hidden === false', keyboardSession, {
+    label: '键盘测试编辑器',
+  });
+  await cdp.evaluate('document.querySelector("#fContent").focus()', keyboardSession);
+  await new Promise((done) => setTimeout(done, 250));
+  await cdp.send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: 390, height: 500, deviceScaleFactor: 2, mobile: true },
+    keyboardSession,
+  );
+  await cdp.waitFor(
+    'getComputedStyle(document.querySelector(".editor__foot")).maxHeight === "0px"',
+    keyboardSession,
+    { label: '底部信息栏收起' },
+  );
+  check(
+    '键盘弹起时编辑器底部信息栏收起',
+    await cdp.evaluate(
+      'getComputedStyle(document.querySelector(".editor__foot")).opacity === "0"',
+      keyboardSession,
+    ),
+  );
+  await cdp.send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+    keyboardSession,
+  );
+  await cdp.waitFor(
+    'parseFloat(getComputedStyle(document.querySelector(".editor__foot")).maxHeight) > 0',
+    keyboardSession,
+    { label: '底部信息栏恢复' },
+  );
+  await cdp.waitFor(
+    'getComputedStyle(document.querySelector(".editor__foot")).opacity === "1"',
+    keyboardSession,
+    { label: '底部信息栏不透明' },
+  );
+  check('键盘收起后底部信息栏恢复', true);
 
   // file:// 直接双击打开也要能用（用户反馈的问题）
   const fileSession = await cdp.openPage(pathToFileURL(resolve('index.html')).href);
