@@ -6,7 +6,7 @@
   'use strict';
 
   const Diary = (root.Diary = root.Diary || {});
-  const VERSION = '3.3.0';
+  const VERSION = '3.3.1';
   /** 赞赏入口：留空则「我的 → 赞赏」整块隐藏（换地址只改这一行） */
   const REWARD_URL = 'https://afdian.com/a/yyqxoc';
   const AUTOSAVE_DELAY = 500;
@@ -75,7 +75,7 @@
       calHead: $('#calHead'),
       calGrid: $('#calGrid'),
       dayList: $('#dayList'),
-      calBlock: $('.calendar'),
+      calBody: $('#calBody'),
       statsGrid: $('#statsGrid'),
       heatmap: $('#heatmap'),
       monthBars: $('#monthBars'),
@@ -367,7 +367,7 @@
       }
       if (name === 'calendar') {
         renderCalendar();
-        resetCalendarView();
+        resetCalendarScroll();
       }
       if (name === 'money') {
         renderMoney();
@@ -606,138 +606,18 @@
           if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
           const direction = goToMonth(state.calYear, state.calMonth + (dx < 0 ? 1 : -1));
           renderCalendar(direction);
-          resetCalendarView();
+          resetCalendarScroll();
         },
         { passive: true },
       );
     }
 
-    /* -------------------------------------------- 日历：下滑收起上半部分 */
+    /* -------------------------------------------- 日历：单容器自然滚动 */
 
-    let calendarCollapsed = false;
-    let calendarAnim = null;
-    let calendarScrollFrame = 0;
-    let calendarAnimating = false;
-    let calendarLastTop = 0;
-
-    /**
-     * 收起 / 展开整块月历（月份导航 + 星期 + 网格）。
-     * 用 WAAPI 直接量高度做动画，月历 5 周 / 6 周时都不会算错。
-     */
-    function setCalendarCollapsed(collapsed, options) {
-      const block = dom.calBlock;
-      if (!block) return;
-      if (collapsed === calendarCollapsed) return;
-      calendarCollapsed = collapsed;
-      if (calendarAnim) {
-        try {
-          calendarAnim.cancel();
-        } catch (error) {
-          /* 已经结束的动画不能取消，忽略 */
-        }
-        calendarAnim = null;
-      }
-
-      const instant = Boolean(options && options.instant) || typeof block.animate !== 'function';
-      if (instant) {
-        calendarAnimating = false;
-        block.hidden = collapsed;
-        block.style.height = '';
-        block.style.opacity = '';
-        block.style.overflow = '';
-        block.style.pointerEvents = '';
-        return;
-      }
-
-      // 动画期间锁住滚动判定，避免「高度变化 → 滚动事件 → 反向切换」的死循环
-      calendarAnimating = true;
-      block.style.pointerEvents = 'none';
-      if (collapsed) {
-        const height = block.offsetHeight;
-        block.hidden = false;
-        block.style.overflow = 'hidden';
-        const anim = block.animate(
-          [
-            { height: `${height}px`, opacity: 1 },
-            { height: '0px', opacity: 0 },
-          ],
-          { duration: 260, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'both' },
-        );
-        calendarAnim = anim;
-        anim.onfinish = () => {
-          if (calendarAnim !== anim) return;
-          block.hidden = true;
-          block.style.height = '';
-          block.style.opacity = '';
-          block.style.overflow = '';
-          block.style.pointerEvents = '';
-          calendarAnimating = false;
-          calendarAnim = null;
-        };
-        return;
-      }
-
-      block.hidden = false;
-      block.style.height = 'auto';
-      const height = block.offsetHeight;
-      block.style.height = '0px';
-      block.style.opacity = '0';
-      block.style.overflow = 'hidden';
-      const anim = block.animate(
-        [
-          { height: '0px', opacity: 0 },
-          { height: `${height}px`, opacity: 1 },
-        ],
-        { duration: 260, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'both' },
-      );
-      calendarAnim = anim;
-      anim.onfinish = () => {
-        if (calendarAnim !== anim) return;
-        block.style.height = '';
-        block.style.opacity = '';
-        block.style.overflow = '';
-        block.style.pointerEvents = '';
-        calendarAnimating = false;
-        calendarAnim = null;
-      };
-    }
-
-    /** 用户主动切月份 / 切模式 / 点日期 / 进日历页时：回到顶部并展开 */
-    function resetCalendarView() {
-      if (dom.dayList) dom.dayList.scrollTop = 0;
-      calendarLastTop = 0;
-      setCalendarCollapsed(false, { instant: true });
-    }
-
-    function bindCalendarCollapse() {
-      const list = dom.dayList;
-      if (!list) return;
-      list.addEventListener(
-        'scroll',
-        () => {
-          if (calendarScrollFrame) return;
-          calendarScrollFrame = requestAnimationFrame(() => {
-            calendarScrollFrame = 0;
-            const scrollable = list.scrollHeight > list.clientHeight + 40;
-            if (!scrollable) {
-              calendarLastTop = list.scrollTop;
-              if (calendarCollapsed) setCalendarCollapsed(false, { instant: true });
-              return;
-            }
-            // 照 Headroom.js：方向 + 容忍距离 + 顶部判定，纯函数便于单测
-            const next = model.collapseOnScroll({
-              lastTop: calendarLastTop,
-              top: list.scrollTop,
-              collapsed: calendarCollapsed,
-            });
-            calendarLastTop = next.lastTop;
-            // 动画进行中只更新 lastTop，不切换状态
-            if (calendarAnimating || next.collapsed === calendarCollapsed) return;
-            setCalendarCollapsed(next.collapsed);
-          });
-        },
-        { passive: true },
-      );
+    /** 日历页只有一个滚动容器：切月份 / 切模式 / 点日期 / 进页面时滚回顶部 */
+    function resetCalendarScroll() {
+      if (dom.calBody) dom.calBody.scrollTop = 0;
+      else if (dom.dayList) dom.dayList.scrollTop = 0;
     }
 
     /* ----------------------------------------- 键盘弹起：收起编辑器底部信息栏 */
@@ -857,7 +737,7 @@
       settings = Diary.settings.saveSettings({ calendarMode: next.key });
       renderCalendarModeButton();
       renderCalendar();
-      resetCalendarView();
+      resetCalendarScroll();
       toast(next.label, { tone: 'success', duration: 1200 });
     }
 
@@ -976,7 +856,7 @@
               onclick: () => {
                 state.calSelected = cell.date;
                 renderCalendar();
-                resetCalendarView();
+                resetCalendarScroll();
               },
             }, children),
           );
@@ -4408,14 +4288,13 @@
 
       $('#btnPrevMonth').addEventListener('click', () => {
         renderCalendar(goToMonth(state.calYear, state.calMonth - 1));
-        resetCalendarView();
+        resetCalendarScroll();
       });
       $('#btnNextMonth').addEventListener('click', () => {
         renderCalendar(goToMonth(state.calYear, state.calMonth + 1));
-        resetCalendarView();
+        resetCalendarScroll();
       });
       bindCalendarSwipe();
-      bindCalendarCollapse();
       bindKeyboardInset();
       bindEditorSwipe();
       $('#btnCalToday').addEventListener('click', () => {
@@ -4423,7 +4302,7 @@
         setCalendarMonth(now.getFullYear(), now.getMonth());
         state.calSelected = today();
         renderCalendar();
-        resetCalendarView();
+        resetCalendarScroll();
       });
       dom.themeGroup.addEventListener('click', (event) => {
         const button = event.target.closest('[data-theme-value]');
@@ -4593,7 +4472,7 @@
         const match = /^(\d{4})-(\d{2})$/.exec(input.value);
         if (match) {
           renderCalendar(goToMonth(Number(match[1]), Number(match[2]) - 1));
-          resetCalendarView();
+          resetCalendarScroll();
         }
         input.remove();
       });
@@ -4883,3 +4762,5 @@
 
   Diary.app = { start };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
+
+

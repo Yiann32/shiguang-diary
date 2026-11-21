@@ -406,89 +406,87 @@ try {
     ),
   );
 
-  // 下滑看当天列表时月份网格自动收起，回到顶部再展开
+  // 月历与当天列表在同一个滚动容器里：下滑月历自然滚出、上滑回来，顶栏固定
   // 先进来的那次自动保存 / 重渲染要落定，否则填充内容会被 renderDayList 清掉
   await new Promise((done) => setTimeout(done, 1200));
   const canScroll = await cdp.evaluate(
     `(() => {
       const list = document.querySelector('#dayList');
-      for (let index = 0; index < 14; index += 1) {
+      for (let index = 0; index < 18; index += 1) {
         const block = document.createElement('div');
         block.className = 'daylist__hint';
         block.textContent = '填充 ' + index;
         block.style.height = '64px';
         list.append(block);
       }
-      list.scrollTop = 320;
-      list.dispatchEvent(new Event('scroll'));
-      return list.scrollHeight > list.clientHeight + 40;
+      const body = document.querySelector('#calBody');
+      return body.scrollHeight > body.clientHeight + 40;
     })()`,
     session,
   );
   check('测试用的超长当天列表确实能滚动', Boolean(canScroll));
-  await cdp.waitFor('document.querySelector(".calendar").hidden === true', session, { label: '月历收起' });
-  check('下滑查看当天列表时，上半部分月份网格自动收起', true);
-
-  // 小抖动（<6px）不切换；向上滑 24px 就展开（Headroom 式方向判定）
+  const barTop = await cdp.evaluate('document.querySelector(".topbar").getBoundingClientRect().top', session);
   await cdp.evaluate(
     `(() => {
-      const list = document.querySelector('#dayList');
-      list.scrollTop = 318;
-      list.dispatchEvent(new Event('scroll'));
+      document.querySelector('#calBody').scrollTop = 420;
       return true;
     })()`,
     session,
   );
-  await new Promise((done) => setTimeout(done, 350));
+  await cdp.waitFor('document.querySelector(".calendar").getBoundingClientRect().top < 0', session, {
+    label: '月历自然滚出',
+  });
   check(
-    '滚动只抖 2px 时不会来回切换',
-    await cdp.evaluate('document.querySelector(".calendar").hidden === true', session),
+    '下滑后月历自然滚出屏幕，顶栏保持固定且没有折叠动画',
+    await cdp.evaluate(
+      `(() => {
+        const cal = document.querySelector('.calendar');
+        const bar = document.querySelector('.topbar');
+        return Math.abs(bar.getBoundingClientRect().top - ${barTop}) < 1
+          && cal.hidden === false
+          && cal.getAnimations().length === 0;
+      })()`,
+      session,
+    ),
   );
   await cdp.evaluate(
     `(() => {
-      const list = document.querySelector('#dayList');
-      list.scrollTop = 294;
-      list.dispatchEvent(new Event('scroll'));
+      document.querySelector('#calBody').scrollTop = 0;
       return true;
     })()`,
     session,
   );
-  await cdp.waitFor('document.querySelector(".calendar").hidden === false', session, { label: '上滑后展开' });
-  check('向上滑一小段就展开月历', true);
-  const collapseFlips = await cdp.evaluate(
+  await cdp.waitFor('document.querySelector(".calendar").getBoundingClientRect().top >= 0', session, {
+    label: '月历滚回可见',
+  });
+  check('上滑回顶部后月历重新可见', true);
+  const scrollStable = await cdp.evaluate(
     `(async () => {
       const cal = document.querySelector('.calendar');
-      let flips = 0;
-      const observer = new MutationObserver(() => {
-        flips += 1;
-      });
-      observer.observe(cal, { attributes: true, attributeFilter: ['hidden'] });
+      const bar = document.querySelector('.topbar');
+      const calTop = cal.getBoundingClientRect().top;
+      const barTopNow = bar.getBoundingClientRect().top;
       await new Promise((done) => setTimeout(done, 1500));
-      observer.disconnect();
-      return flips;
+      return {
+        cal: Math.abs(cal.getBoundingClientRect().top - calTop) < 1,
+        bar: Math.abs(bar.getBoundingClientRect().top - barTopNow) < 1,
+        anims: cal.getAnimations().length,
+      };
     })()`,
     session,
   );
-  check('1.5 秒内不再反复收起/展开', collapseFlips <= 1, `切换 ${collapseFlips} 次`);
-
-  await cdp.evaluate(
-    `(() => {
-      const list = document.querySelector('#dayList');
-      list.scrollTop = 0;
-      list.dispatchEvent(new Event('scroll'));
-      return true;
-    })()`,
-    session,
+  check(
+    '1.5 秒内月历与顶栏位置稳定、无动画',
+    scrollStable.cal && scrollStable.bar && scrollStable.anims === 0,
+    JSON.stringify(scrollStable),
   );
-  await cdp.waitFor('document.querySelector(".calendar").hidden === false', session, { label: '月历展开' });
-  check('回到列表顶部后月份网格自动展开', true);
   await cdp.evaluate(
     `(() => {
       const list = document.querySelector('#dayList');
       [...list.querySelectorAll('.daylist__hint')]
         .filter((node) => node.textContent.startsWith('填充 '))
         .forEach((node) => node.remove());
-      list.scrollTop = 0;
+      document.querySelector('#calBody').scrollTop = 0;
       return true;
     })()`,
     session,
@@ -1569,7 +1567,14 @@ try {
   );
   await cdp.send('Page.reload', {}, keyboardSession);
   await cdp.waitFor(BOOTED, keyboardSession, { label: '键盘测试重新加载' });
-  await cdp.evaluate('document.querySelector("#btnNew").click()', keyboardSession);
+  // 新页面里按钮监听是在 store.init() 之后才绑的，数据多时 BOOTED 之后还要等一下；
+  // 点不到就再点一次，比死等固定时长稳。
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await cdp.evaluate('document.querySelector("#btnNew").click()', keyboardSession);
+    await new Promise((done) => setTimeout(done, 150));
+    const opened = await cdp.evaluate('document.querySelector("#editor").hidden === false', keyboardSession);
+    if (opened) break;
+  }
   await cdp.waitFor('document.querySelector("#editor").hidden === false', keyboardSession, {
     label: '键盘测试编辑器',
   });

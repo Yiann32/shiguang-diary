@@ -31,7 +31,7 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 
 - **时间线**：卡片列表 + 顶部「待办」小卡片（点标题进待办二级页）。
 - **日历**：右上角**一颗四态循环按钮**，点一下换一档「日记 → 记账 → 待办 → 排单」，每次切换弹一个绿色 toast 报状态；格子与下面的当天详情跟着模式变。左上角日期 = 选年月（原来那颗 shuffle 按钮已删），右边保留「回到今天」。
-  - 下滑看当天列表时，整块月历（`.calendar`）自动收起，顶栏保留；回到列表顶部自动展开；切月份 / 切模式 / 点日期 / 进日历页会立即展开并滚回顶部
+  - 月历（`.calendar`）和当天列表在同一个滚动容器 `.calbody` 里：下滑时月历自然滚出屏幕、上滑自然回来，顶栏固定；切月份 / 切模式 / 点日期 / 进日历页会滚回顶部。**不要再加收起/展开状态或高度动画**（v3.3.0 的 WAAPI 方案会残留 fill 动画，导致 6px 卡死和来回闪）
   - 日记模式：有记录的日子带底纹
   - 记账模式：格子里显示当天支出金额（`formatMoneyShort` 缩写），有收入的日子加一个 `calcellsig` 小点
   - 待办模式：格子里显示 `未完成/总数`（`caldot`，全部完成用 `caldot--all-done`，逾期用 `caldot--overdue`），当天详情含已完成的
@@ -166,7 +166,7 @@ Windows 上用 `.\gradlew.bat`；命令行构建需要与 Gradle 兼容的 JDK�
 | 键盘顶部的 chips | `js/app.js` 的 `renderKeypadChips`（日期 / 账户 / 备注，`data-chip` 用来定位） |
 | 日记图片（张数 / 压缩） | `js/app.js` 的 `MAX_IMAGES` / `IMAGE_EDGE` / `IMAGE_MAX_FILE`，缩略图与删除按钮在 `renderEditorMedia` |
 | 图片 blob URL 池 | `js/app.js` 的 `timelineUrls` / `editorUrls` / `deferredUrls`：**两个视图必须分池**，时间线重渲染不能 revoke 编辑器正在显示的图（否则打字自动保存后点开是空白） |
-| 日历下滑折叠阈值 | `js/app.js` 的 `bindCalendarCollapse`（`scrollTop > 24` 收起、`<= 8` 展开） |
+| 日历滚动容器 | `#calBody`（`.calbody`）+ `js/app.js` 的 `resetCalendarScroll`；月历和当天列表同容器，纯原生滚动 |
 | 待办优先级排序 | `js/model.js` 的 `sortTodos`（紧急 → 重要 → 普通）；新建 / 改优先级落在 `js/store.js` 的 `nextTodoOrder` |
 | 金额键盘的显示串 | `js/model.js` 的 `formatAmountInput`（保留小数点 / 尾零，别改回 `formatMoney`） |
 | 约稿状态与分组 | `js/model.js` 的 `commissionPayLabel` / `commissionGroups` / `commissionDueMap` |

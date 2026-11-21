@@ -103,17 +103,19 @@
             <button class="iconbtn" id="btnCalToday" type="button" aria-label="回到今天" title="回到今天"></button>
           </header>
 
-          <div class="calendar">
-            <div class="calnav">
-              <button class="iconbtn iconbtn--sm" id="btnPrevMonth" type="button" aria-label="上个月"></button>
-              <span class="calnav__label" id="calMonthLabel"></span>
-              <button class="iconbtn iconbtn--sm" id="btnNextMonth" type="button" aria-label="下个月"></button>
+          <div class="calbody" id="calBody">
+            <div class="calendar">
+              <div class="calnav">
+                <button class="iconbtn iconbtn--sm" id="btnPrevMonth" type="button" aria-label="上个月"></button>
+                <span class="calnav__label" id="calMonthLabel"></span>
+                <button class="iconbtn iconbtn--sm" id="btnNextMonth" type="button" aria-label="下个月"></button>
+              </div>
+              <div class="calendar__head" id="calHead"></div>
+              <div class="calendar__grid" id="calGrid"></div>
             </div>
-            <div class="calendar__head" id="calHead"></div>
-            <div class="calendar__grid" id="calGrid"></div>
-          </div>
 
-          <div class="daylist" id="dayList"></div>
+            <div class="daylist" id="dayList"></div>
+          </div>
         </section>
 
         <!-- 记账 -->

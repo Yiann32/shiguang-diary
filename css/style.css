@@ -693,6 +693,13 @@ body {
 
 /* ---------------------------------------------------------------- 日历 */
 
+.calbody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .calendar {
   padding: 0 14px 6px;
 }
@@ -770,12 +777,6 @@ body {
 }
 
 .daylist {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  /* 月历收起/展开会改变可视区高度，关掉滚动锚定，避免浏览器改 scrollTop 造成来回闪 */
-  overflow-anchor: none;
   padding: 14px 18px calc(124px + var(--safe-bottom));
 }
 
