@@ -97,8 +97,10 @@ function readVersionName() {
 
 /* ------------------------------------------------------------- 二维码 */
 
-const qr = encodeQr(APK_URL);
-const check = selfCheck(APK_URL, qr);
+// 带版本参数的下载地址：每个版本都是新 URL，绕过浏览器 / CDN 对旧 APK 的缓存
+const APK_LINK = `${APK_URL}?v=${encodeURIComponent(version)}`;
+const qr = encodeQr(APK_LINK);
+const check = selfCheck(APK_LINK, qr);
 if (!check.ok) {
   console.error(`二维码自检失败：${check.reason}`);
   process.exit(1);
@@ -107,7 +109,15 @@ const qrSvg = qrToSvg(qr, { size: 196, quiet: 3, label: '扫码下载拾光日�
 
 /* ------------------------------------------------------------- 页面 */
 
-const html = buildPage({ version, stamp, sizeText, qrSvg, apkUrl: APK_URL, pageUrl: PAGE_URL, repoUrl: REPO_URL });
+const html = buildPage({
+  version,
+  stamp,
+  sizeText,
+  qrSvg,
+  apkUrl: APK_LINK,
+  pageUrl: PAGE_URL,
+  repoUrl: REPO_URL,
+});
 
 /* ------------------------------------------------------------- 落地 */
 
@@ -120,7 +130,7 @@ console.log(`版本：v${version} · ${stamp} · ${sizeText}`);
 console.log(`页面：${join(RELEASE_DIR, 'index.html')}`);
 console.log(`二维码自检：通过（版本 ${qr.version}，掩码 ${qr.mask}）`);
 console.log(`下载页：${PAGE_URL}`);
-console.log(`直　链：${APK_URL}`);
+console.log(`直　链：${APK_LINK}`);
 
 if (dryRun) {
   console.log('\n--dry：已生成文件，未执行 git 操作。');

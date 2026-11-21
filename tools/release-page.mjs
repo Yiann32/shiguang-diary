@@ -144,6 +144,9 @@ code {
     源码 <a href="${info.repoUrl}">${info.repoUrl.replace('https://', '')}</a><br />
     这个网址永远指向最新一版，改完代码重新发布即可。
   </p>
+  <p class="links">
+    页面显示的不是 v${info.version}？<a href="${info.pageUrl}?v=${encodeURIComponent(info.version)}">点这里强制刷新</a>（国内 CDN 可能缓存旧页面）。
+  </p>
 </div>
 </body>
 </html>
